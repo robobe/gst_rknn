@@ -1,0 +1,4 @@
+profile,median_fps,mean_iou,min_iou,matched_frames,timestamp_utc
+mixed,32.06,0.9344,0.9125,500,2026-09-11T10:22:15Z
+int8,53.30,0.9367,0.8990,500,2026-09-11T10:23:13Z
+int8-mmse,52.88,0.9428,0.8988,500,2026-09-11T10:24:11Z
