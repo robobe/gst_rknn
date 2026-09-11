@@ -1,0 +1,14 @@
+{
+  "version": 6,
+  "configurePresets": [{
+    "name": "radxa-debug",
+    "displayName": "Radxa aarch64 Debug",
+    "generator": "Ninja",
+    "binaryDir": "${sourceDir}/build/radxa-debug",
+    "cacheVariables": {
+      "CMAKE_BUILD_TYPE": "Debug",
+      "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/radxa-aarch64.cmake"
+    }
+  }],
+  "buildPresets": [{"name": "radxa-debug", "configurePreset": "radxa-debug"}]
+}
