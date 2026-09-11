@@ -1,4 +1,7 @@
 /build/
 /assets/nanotracker/move_right_500.mp4
 /demos/nanotracker/synthetic/move_right_500.csv
+__pycache__/
+*.pyc
+models/nanotracker12/*/tools/calibration/
 tools/__pycache__/udp_bbox_viewer.cpython-312.pyc
