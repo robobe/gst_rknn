@@ -14,6 +14,7 @@
     {"label": "Radxa: smoke test NanoTracker", "type": "shell", "command": "${workspaceFolder}/scripts/nanotracker/test.sh", "args": ["smoke"]},
     {"label": "Radxa: smoke test NanoTracker video", "type": "shell", "command": "${workspaceFolder}/scripts/nanotracker/test.sh", "args": ["video"]},
     {"label": "Radxa: compare NanoTracker video", "type": "shell", "command": "${workspaceFolder}/scripts/nanotracker/test.sh", "args": ["compare"]},
+    {"label": "Radxa: benchmark NanoTracker V3", "type": "shell", "command": "${workspaceFolder}/scripts/nanotracker/test.sh", "args": ["bench"]},
     {"label": "Radxa: inspect NanoTracker12", "type": "shell", "command": "${workspaceFolder}/scripts/nanotracker12/test.sh", "args": ["inspect"]},
     {"label": "Radxa: smoke NanoTracker12 V1", "type": "shell", "command": "${workspaceFolder}/scripts/nanotracker12/test.sh", "args": ["smoke", "v1"]},
     {"label": "Radxa: smoke NanoTracker12 V2", "type": "shell", "command": "${workspaceFolder}/scripts/nanotracker12/test.sh", "args": ["smoke", "v2"]},

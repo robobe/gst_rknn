@@ -20,6 +20,10 @@ deploy_plugins() {
 deploy_models() {
   ssh "$target" "mkdir -p '$remote_root/models'"
   rsync -a "$project_root/models/" "$target:$remote_root/models/"
+  # NanoTrackV3 predates the per-version model tree and resolves models at its root.
+  if compgen -G "$project_root/models/nanotracker/rknn/*.rknn" >/dev/null; then
+    rsync -a "$project_root/models/nanotracker/rknn/"*.rknn "$target:$remote_root/models/nanotracker/"
+  fi
 }
 
 deploy_assets() {

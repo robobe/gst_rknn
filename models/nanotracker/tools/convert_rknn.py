@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert NanoTrackV3 ONNX models with RKNN Toolkit 2."""
+"""Build NanoTrackV3 mixed or fully INT8 RKNN models with RKNN Toolkit 2."""
 
 import argparse
 from pathlib import Path
@@ -29,10 +29,7 @@ def convert(onnx_path, output_path, quantize=False, dataset=None, algorithm="nor
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--head-dataset", type=Path,
-                        help="Representative head-feature dataset list; required for INT8 head conversion")
-    parser.add_argument("--quant-algorithm", choices=("normal", "mmse"), default="normal")
-    parser.add_argument("--skip-head", action="store_true")
+    parser.add_argument("--profile", choices=("mixed", "int8", "int8-mmse"), default="mixed")
     args = parser.parse_args()
 
     template = ONNX / "nanotrack_backbone_template.onnx"
@@ -43,12 +40,19 @@ def main():
             parser.error(f"missing {source}")
 
     OUTPUT.mkdir(exist_ok=True)
-    convert(template, OUTPUT / "nanotrack_backbone_template.rknn")
-    convert(backbone, OUTPUT / "nanotrack_backbone.rknn")
-    if not args.skip_head:
-        if not args.head_dataset or not args.head_dataset.is_file():
-            parser.error("--head-dataset is required unless --skip-head is used")
-        convert(head, OUTPUT / "nanotrack_head_int8.rknn", True, args.head_dataset, args.quant_algorithm)
+    calibration = ROOT / "tools" / "calibration"
+    head_dataset, template_dataset, search_dataset = (calibration / item for item in ("dataset.txt", "template_images.txt", "search_images.txt"))
+    if not head_dataset.is_file(): parser.error("run generate_calibration.py first")
+    if args.profile == "mixed":
+        convert(template, OUTPUT / "nanotrack_backbone_template.rknn")
+        convert(backbone, OUTPUT / "nanotrack_backbone.rknn")
+        convert(head, OUTPUT / "nanotrack_head_int8.rknn", True, head_dataset)
+        return
+    if not template_dataset.is_file() or not search_dataset.is_file(): parser.error("run generate_calibration.py again to create image lists")
+    suffix, algorithm = ("_int8_mmse", "mmse") if args.profile == "int8-mmse" else ("_int8", "normal")
+    convert(template, OUTPUT / f"nanotrack_backbone_template{suffix}.rknn", True, template_dataset, algorithm)
+    convert(backbone, OUTPUT / f"nanotrack_backbone{suffix}.rknn", True, search_dataset, algorithm)
+    convert(head, OUTPUT / f"nanotrack_head{suffix}.rknn", True, head_dataset, algorithm)
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ them with `RADXA_HOST`, `RADXA_USER`, and `RADXA_ROOT`.
 | `./scripts/nanotracker/test.sh smoke` | Run 60 generated BGR frames through NanoTracker. |
 | `./scripts/nanotracker/test.sh video` | Run the 500-frame MP4; writes `predictions.csv`, `run_metrics.txt`, and `run_pipeline.txt` under remote NanoTracker assets. |
 | `./scripts/nanotracker/test.sh compare` | Compare predictions to ground truth and print IoU, FPS, and the pipeline command. |
+| `./scripts/nanotracker/test.sh bench` | Run five V3 INT8 RGA/fakesink passes and print post-warm-up median FPS; set `NANOTRACK_PRECISION=mixed` or `int8-mmse` to compare. |
 | `./scripts/nanotracker/stream.sh` | Stream NanoTracker H.264/RTP video and ROI metadata to `video-metadata-viewer`. |
 | `./scripts/nanotracker12/test.sh inspect` | Inspect the independent NanoTrack V1/V2 element. |
 | `./scripts/nanotracker12/test.sh smoke v1\|v2` | Run 60 BGR frames through the selected V1 or V2 model. |
