@@ -70,54 +70,68 @@ public:
         std::vector<char> data(static_cast<size_t>(size)); input.seekg(0);
         if (!input.read(data.data(), size)) throw std::runtime_error("cannot read model: " + path);
         require(rknn_init(&context_, data.data(), static_cast<uint32_t>(data.size()), 0, nullptr), "load model");
-        try { require(rknn_query(context_, RKNN_QUERY_IN_OUT_NUM, &io_, sizeof(io_)), "query model I/O"); }
+        try {
+            require(rknn_query(context_, RKNN_QUERY_IN_OUT_NUM, &io_, sizeof(io_)), "query model I/O");
+            inputs_.resize(io_.n_input); outputs_.resize(io_.n_output);
+            for (uint32_t i = 0; i < io_.n_input; ++i) { inputs_[i].index = i; require(rknn_query(context_, RKNN_QUERY_INPUT_ATTR, &inputs_[i], sizeof(inputs_[i])), "query input"); }
+            for (uint32_t i = 0; i < io_.n_output; ++i) { outputs_[i].index = i; require(rknn_query(context_, RKNN_QUERY_OUTPUT_ATTR, &outputs_[i], sizeof(outputs_[i])), "query output"); }
+        }
         catch (...) { rknn_destroy(context_); context_ = 0; throw; }
     }
-    ~Network() { if (context_) rknn_destroy(context_); }
     Network(const Network&) = delete;
     Network& operator=(const Network&) = delete;
 
-    std::vector<std::vector<float>> infer(const std::vector<const void*>& data, const std::vector<size_t>& bytes,
-                                          const std::vector<rknn_tensor_type>& types, const std::vector<rknn_tensor_format>& formats) {
-        if (data.size() != io_.n_input) throw std::runtime_error("unexpected model input count");
-        std::vector<rknn_input> inputs(io_.n_input);
-        for (size_t i = 0; i < inputs.size(); ++i) {
-            inputs[i].index = i; inputs[i].buf = const_cast<void*>(data[i]); inputs[i].size = bytes[i];
-            inputs[i].type = types[i]; inputs[i].fmt = formats[i]; inputs[i].pass_through = 0;
-        }
-        require(rknn_inputs_set(context_, static_cast<uint32_t>(inputs.size()), inputs.data()), "set model inputs");
-        require(rknn_run(context_, nullptr), "run model");
-        std::vector<rknn_output> outputs(io_.n_output);
-        for (size_t i = 0; i < outputs.size(); ++i) { outputs[i].index = i; outputs[i].want_float = 1; }
-        require(rknn_outputs_get(context_, static_cast<uint32_t>(outputs.size()), outputs.data(), nullptr), "get model outputs");
-        std::vector<std::vector<float>> result;
-        try {
-            result.resize(outputs.size());
-            for (size_t i = 0; i < outputs.size(); ++i) {
-                rknn_tensor_attr attr{}; attr.index = i;
-                require(rknn_query(context_, RKNN_QUERY_OUTPUT_ATTR, &attr, sizeof(attr)), "query output shape");
-                result[i].assign(static_cast<float*>(outputs[i].buf), static_cast<float*>(outputs[i].buf) + attr.n_elems);
-            }
-            require(rknn_outputs_release(context_, static_cast<uint32_t>(outputs.size()), outputs.data()), "release model outputs");
-        } catch (...) { rknn_outputs_release(context_, static_cast<uint32_t>(outputs.size()), outputs.data()); throw; }
-        return result;
+    ~Network() { release(); }
+
+    void expect_input(uint32_t index, uint32_t channels, uint32_t height, uint32_t width) const { expect(inputs_.at(index), channels, height, width); }
+    void expect_output(uint32_t index, uint32_t channels, uint32_t height, uint32_t width) const { expect(outputs_.at(index), channels, height, width); }
+    uint32_t input_count() const { return io_.n_input; }
+    uint32_t output_count() const { return io_.n_output; }
+
+    rknn_tensor_mem* image() {
+        auto attr = inputs_.at(0); const uint32_t height = attr.fmt == RKNN_TENSOR_NHWC ? attr.dims[1] : attr.dims[2];
+        const uint32_t width = attr.fmt == RKNN_TENSOR_NHWC ? attr.dims[2] : attr.dims[3];
+        const uint32_t aligned_width = (width + 15) & ~15U, aligned_height = (height + 15) & ~15U;
+        attr.type = RKNN_TENSOR_UINT8; attr.fmt = RKNN_TENSOR_NHWC; attr.pass_through = 0;
+        attr.size = width * height * 3; attr.size_with_stride = aligned_width * aligned_height * 3;
+        attr.w_stride = aligned_width; attr.h_stride = aligned_height;
+        auto* memory = allocate(attr); std::memset(memory->virt_addr, 0, memory->size); return memory;
     }
+    rknn_tensor_mem* floats(uint32_t index, rknn_tensor_format format) {
+        auto attr = outputs_.at(index); attr.type = RKNN_TENSOR_FLOAT32; attr.fmt = format;
+        attr.size = attr.n_elems * sizeof(float); attr.size_with_stride = attr.size; return allocate(attr);
+    }
+    void import(uint32_t index, rknn_tensor_mem* source) {
+        auto attr = inputs_.at(index); attr.type = RKNN_TENSOR_FLOAT32; attr.fmt = RKNN_TENSOR_NHWC; attr.pass_through = 0;
+        attr.size = attr.n_elems * sizeof(float); attr.size_with_stride = attr.size;
+        if (source->size < attr.size) throw std::runtime_error("shared feature buffer is too small");
+        auto* memory = rknn_create_mem_from_fd(context_, source->fd, source->virt_addr, attr.size, source->offset);
+        if (!memory) throw std::runtime_error("cannot import shared feature memory");
+        own(memory); require(rknn_set_io_mem(context_, memory, &attr), "bind shared feature input");
+    }
+    void run() { require(rknn_run(context_, nullptr), "run model"); }
+    void sync(rknn_tensor_mem* memory, rknn_mem_sync_mode mode) { require(rknn_mem_sync(context_, memory, mode), "sync tensor memory"); }
 private:
+    static void expect(const rknn_tensor_attr& attr, uint32_t channels, uint32_t height, uint32_t width) {
+        const bool nchw = attr.fmt == RKNN_TENSOR_NCHW && attr.dims[1] == channels && attr.dims[2] == height && attr.dims[3] == width;
+        const bool nhwc = attr.fmt == RKNN_TENSOR_NHWC && attr.dims[1] == height && attr.dims[2] == width && attr.dims[3] == channels;
+        if (attr.n_dims != 4 || attr.dims[0] != 1 || (!nchw && !nhwc) || attr.n_elems != channels * height * width) throw std::runtime_error("unexpected RKNN tensor shape");
+    }
+    rknn_tensor_mem* allocate(rknn_tensor_attr attr) {
+        auto* memory = rknn_create_mem(context_, attr.size_with_stride);
+        if (!memory || !memory->virt_addr) throw std::runtime_error("cannot allocate RKNN tensor memory");
+        own(memory); require(rknn_set_io_mem(context_, memory, &attr), "bind tensor memory"); return memory;
+    }
+    void own(rknn_tensor_mem* memory) { memories_.push_back(memory); }
+    void release() noexcept { for (auto* memory : memories_) rknn_destroy_mem(context_, memory); memories_.clear(); if (context_) rknn_destroy(context_); context_ = 0; }
     rknn_context context_ = 0;
     rknn_input_output_num io_{};
+    std::vector<rknn_tensor_attr> inputs_, outputs_;
+    std::vector<rknn_tensor_mem*> memories_;
 };
 
 struct Result { cv::Rect2d box; double confidence; bool initialized; };
 
-std::vector<float> nchw_to_nhwc(const std::vector<float>& source, int channels, int height, int width) {
-    if (source.size() != size_t(channels * height * width)) throw std::runtime_error("unexpected backbone feature shape");
-    std::vector<float> target(source.size());
-    for (int channel = 0; channel < channels; ++channel)
-        for (int y = 0; y < height; ++y)
-            for (int x = 0; x < width; ++x)
-                target[(y * width + x) * channels + channel] = source[(channel * height + y) * width + x];
-    return target;
-}
 
 class Tracker12 {
 public:
@@ -125,6 +139,16 @@ public:
         : profile_(profile_for(version)), template_(file_for(root, version, precision, "nanotrack_backbone_template", false)),
           search_(file_for(root, version, precision, "nanotrack_backbone", false)),
           head_(file_for(root, version, precision, "nanotrack_head", true)), use_rga_(use_rga) {
+        if (template_.input_count() != 1 || template_.output_count() != 1 || search_.input_count() != 1 || search_.output_count() != 1 || head_.input_count() != 2 || head_.output_count() != 2)
+            throw std::runtime_error("unexpected V1/V2 model I/O count");
+        template_.expect_input(0, 3, 127, 127); template_.expect_output(0, 48, 8, 8);
+        search_.expect_input(0, 3, 255, 255); search_.expect_output(0, 48, 16, 16);
+        head_.expect_input(0, 48, 8, 8); head_.expect_input(1, 48, 16, 16);
+        head_.expect_output(0, 2, 16, 16); head_.expect_output(1, 4, 16, 16);
+        template_image_ = template_.image(); search_image_ = search_.image();
+        head_.import(0, template_.floats(0, RKNN_TENSOR_NHWC));
+        head_.import(1, search_.floats(0, RKNN_TENSOR_NHWC));
+        scores_ = head_.floats(0, RKNN_TENSOR_NCHW); boxes_ = head_.floats(1, RKNN_TENSOR_NCHW);
         window_.resize(256);
         for (int y = 0, i = 0; y < 16; ++y) for (int x = 0; x < 16; ++x, ++i)
             window_[i] = (.5f - .5f * std::cos(2.f * float(CV_PI) * x / 15.f)) * (.5f - .5f * std::cos(2.f * float(CV_PI) * y / 15.f));
@@ -132,25 +156,23 @@ public:
     Result initialize(const cv::Mat& frame, const cv::Rect2d& roi, GstObject* owner) {
         center_ = {float(roi.x + (roi.width - 1) / 2), float(roi.y + (roi.height - 1) / 2)};
         size_ = {float(roi.width), float(roi.height)}; average_ = cv::mean(frame);
-        const cv::Mat crop = make_crop(frame, std::lround(padded(size_.width, size_.height)), 127, owner);
-        template_feature_ = nchw_to_nhwc(template_.infer({crop.data}, {crop.total() * crop.elemSize()}, {RKNN_TENSOR_UINT8}, {RKNN_TENSOR_NHWC}).at(0), 48, 8, 8);
+        fill_image(frame, std::lround(padded(size_.width, size_.height)), 127, template_, template_image_, owner);
+        template_.run();
         return {roi, 0, true};
     }
     Result track(const cv::Mat& frame, GstObject* owner) {
         const float template_size = padded(size_.width, size_.height), scale = 127.f / template_size;
-        const cv::Mat crop = make_crop(frame, std::lround(template_size * 255.f / 127.f), 255, owner);
-        const auto search_feature = nchw_to_nhwc(search_.infer({crop.data}, {crop.total() * crop.elemSize()}, {RKNN_TENSOR_UINT8}, {RKNN_TENSOR_NHWC}).at(0), 48, 16, 16);
-        const auto outputs = head_.infer({template_feature_.data(), search_feature.data()},
-            {template_feature_.size() * sizeof(float), search_feature.size() * sizeof(float)},
-            {RKNN_TENSOR_FLOAT32, RKNN_TENSOR_FLOAT32}, {RKNN_TENSOR_NHWC, RKNN_TENSOR_NHWC});
-        if (outputs.size() != 2 || outputs[0].size() != 512 || outputs[1].size() != 1024) throw std::runtime_error("unexpected V1/V2 head output shapes");
+        fill_image(frame, std::lround(template_size * 255.f / 127.f), 255, search_, search_image_, owner);
+        search_.run(); head_.run();
+        head_.sync(scores_, RKNN_MEMORY_SYNC_FROM_DEVICE); head_.sync(boxes_, RKNN_MEMORY_SYNC_FROM_DEVICE);
+        const auto* scores = static_cast<const float*>(scores_->virt_addr); const auto* boxes = static_cast<const float*>(boxes_->virt_addr);
         float best_rank = -1, best_score = 0, best_penalty = 0; cv::Point2f offset; cv::Size2f proposal;
         for (int i = 0; i < 256; ++i) {
-            const float bg = outputs[0][i], fg = outputs[0][256 + i], max_score = std::max(bg, fg);
+            const float bg = scores[i], fg = scores[256 + i], max_score = std::max(bg, fg);
             const float score = std::exp(fg - max_score) / (std::exp(bg - max_score) + std::exp(fg - max_score));
             const float px = float(i % 16 - 8) * 16.f, py = float(i / 16 - 8) * 16.f;
-            const float left = px - outputs[1][i], top = py - outputs[1][256 + i];
-            const float right = px + outputs[1][512 + i], bottom = py + outputs[1][768 + i];
+            const float left = px - boxes[i], top = py - boxes[256 + i];
+            const float right = px + boxes[512 + i], bottom = py + boxes[768 + i];
             const float width = right - left, height = bottom - top;
             if (!std::isfinite(score) || !std::isfinite(width) || !std::isfinite(height) || width <= 0 || height <= 0) continue;
             const float shape = padded(width, height) / padded(size_.width * scale, size_.height * scale);
@@ -167,27 +189,34 @@ public:
         return {{center_.x - size_.width / 2, center_.y - size_.height / 2, size_.width, size_.height}, best_score, false};
     }
 private:
-    cv::Mat make_crop(const cv::Mat& frame, int source_side, int destination_side, GstObject* owner) {
+    void fill_image(const cv::Mat& frame, int source_side, int destination_side, Network& network,
+                    rknn_tensor_mem* destination, GstObject* owner) {
         if (source_side <= 0 || source_side > 65536) throw std::runtime_error("unsupported crop size");
         const int x = int(std::floor(center_.x - source_side * .5f)), y = int(std::floor(center_.y - source_side * .5f));
         cv::Mat source(source_side, source_side, CV_8UC3, average_);
         const cv::Rect valid = cv::Rect(x, y, source_side, source_side) & cv::Rect(0, 0, frame.cols, frame.rows);
         if (valid.empty()) throw std::runtime_error("crop is outside the frame");
         frame(valid).copyTo(source(cv::Rect(valid.x - x, valid.y - y, valid.width, valid.height)));
-        cv::Mat result(destination_side, destination_side, CV_8UC3);
+        const int aligned = (destination_side + 15) & ~15;
+        const size_t bytes = size_t(aligned) * aligned * 3;
+        if (destination->size < bytes) throw std::runtime_error("RKNN image buffer is too small");
         if (use_rga_) {
             auto input = importbuffer_virtualaddr(source.data, int(source.total() * source.elemSize()));
-            auto output = importbuffer_virtualaddr(result.data, int(result.total() * result.elemSize()));
-            if (input && output && imresize(wrapbuffer_handle(input, source_side, source_side, RK_FORMAT_BGR_888), wrapbuffer_handle(output, destination_side, destination_side, RK_FORMAT_BGR_888)) == IM_STATUS_SUCCESS) {
-                releasebuffer_handle(input); releasebuffer_handle(output); return result;
+            auto output = importbuffer_fd(destination->fd, int(bytes));
+            if (input && output && imresize(wrapbuffer_handle(input, source_side, source_side, RK_FORMAT_BGR_888), wrapbuffer_handle(output, destination_side, destination_side, RK_FORMAT_BGR_888, aligned, aligned)) == IM_STATUS_SUCCESS) {
+                releasebuffer_handle(input); releasebuffer_handle(output); network.sync(destination, RKNN_MEMORY_SYNC_TO_DEVICE); return;
             }
             if (input) releasebuffer_handle(input);
             if (output) releasebuffer_handle(output);
             GST_WARNING_OBJECT(owner, "RGA resize failed; using OpenCV for this and subsequent frames"); use_rga_ = false;
         }
-        cv::resize(source, result, result.size(), 0, 0, cv::INTER_LINEAR); return result;
+        network.sync(destination, RKNN_MEMORY_SYNC_FROM_DEVICE); std::memset(destination->virt_addr, 0, bytes);
+        cv::Mat result(destination_side, destination_side, CV_8UC3, destination->virt_addr, size_t(aligned) * 3);
+        cv::resize(source, result, result.size(), 0, 0, cv::INTER_LINEAR); network.sync(destination, RKNN_MEMORY_SYNC_TO_DEVICE);
     }
-    Profile profile_; Network template_, search_, head_; bool use_rga_; cv::Point2f center_; cv::Size2f size_; cv::Scalar average_; std::vector<float> template_feature_, window_;
+    Profile profile_; Network template_, search_, head_; bool use_rga_; cv::Point2f center_; cv::Size2f size_; cv::Scalar average_;
+    rknn_tensor_mem *template_image_ = nullptr, *search_image_ = nullptr, *scores_ = nullptr, *boxes_ = nullptr;
+    std::vector<float> window_;
 };
 
 struct State { std::mutex mutex; std::string roi, models_dir, version = "v2", precision = "mixed", resize = "auto"; bool enabled = false, started = false, reset = true; GstVideoInfo info{}; std::unique_ptr<Tracker12> tracker; };

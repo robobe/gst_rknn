@@ -19,5 +19,6 @@ them with `RADXA_HOST`, `RADXA_USER`, and `RADXA_ROOT`.
 | `./scripts/nanotracker12/test.sh inspect` | Inspect the independent NanoTrack V1/V2 element. |
 | `./scripts/nanotracker12/test.sh smoke v1\|v2` | Run 60 BGR frames through the selected V1 or V2 model. |
 | `./scripts/nanotracker12/test.sh video v1\|v2` | Write selected-version tracking metadata for the 500-frame synthetic video. |
+| `./scripts/nanotracker12/test.sh bench v2` | Run five V2 INT8 fakesink passes and print the post-warm-up median FPS; use `NANOTRACK_PRECISION=mixed` to compare mixed. |
 | `./scripts/nanotracker12/stream-v1.sh` | Stream V1 H.264/RTP video and `nanotrack` metadata to the host viewer. |
 | `./scripts/nanotracker12/stream-v2.sh` | Stream V2 H.264/RTP video and `nanotrack` metadata to the host viewer. |

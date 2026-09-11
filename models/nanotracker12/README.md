@@ -15,7 +15,8 @@ python3 v1/tools/generate_calibration.py
 python3 v1/tools/convert_rknn.py
 ```
 
-Repeat for `v2`. `generate_calibration.py` uses the repository's synthetic
+Repeat for `v2`. `python3 v2/tools/convert_rknn.py --profile int8` builds the
+optional fully quantized V2 profile. `generate_calibration.py` uses the repository's synthetic
 moving-box video and GT CSV by default. It emits feature pairs required for
 multi-input head calibration; the generated `tools/calibration/` directories
 are intentionally ignored by Git.

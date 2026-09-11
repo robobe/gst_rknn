@@ -19,6 +19,7 @@
     {"label": "Radxa: smoke NanoTracker12 V2", "type": "shell", "command": "${workspaceFolder}/scripts/nanotracker12/test.sh", "args": ["smoke", "v2"]},
     {"label": "Radxa: video NanoTracker12 V1", "type": "shell", "command": "${workspaceFolder}/scripts/nanotracker12/test.sh", "args": ["video", "v1"]},
     {"label": "Radxa: video NanoTracker12 V2", "type": "shell", "command": "${workspaceFolder}/scripts/nanotracker12/test.sh", "args": ["video", "v2"]},
+    {"label": "Radxa: benchmark NanoTracker12 V2", "type": "shell", "command": "${workspaceFolder}/scripts/nanotracker12/test.sh", "args": ["bench", "v2"]},
     {"label": "Host: configure video metadata viewer", "type": "shell", "command": "cmake", "args": ["-S", "${workspaceFolder}/tools/video-metadata-viewer", "-B", "${workspaceFolder}/build/video-metadata-viewer", "-G", "Ninja"]},
     {"label": "Host: build video metadata viewer", "type": "shell", "command": "cmake", "args": ["--build", "${workspaceFolder}/build/video-metadata-viewer"], "dependsOn": "Host: configure video metadata viewer", "dependsOrder": "sequence"},
     {"label": "Host: run video metadata viewer", "type": "shell", "command": "${workspaceFolder}/build/video-metadata-viewer/video-metadata-viewer"},

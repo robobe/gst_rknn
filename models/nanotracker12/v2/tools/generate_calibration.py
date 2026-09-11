@@ -40,15 +40,21 @@ def main():
     template = ort.InferenceSession(str(ROOT / "onnx/nanotrack_backbone_template_sim.onnx"), providers=["CPUExecutionProvider"])
     template_box = [float(rows[0][key]) for key in ("x", "y", "width", "height")]
     template_feature = run(template, crop(template_frame, template_box, 127))
-    dataset = []
+    dataset, template_images, search_images = [], [], []
     for index, row in enumerate(rows[:args.max_samples]):
         capture.set(cv2.CAP_PROP_POS_FRAMES, index); ok, frame = capture.read()
         if not ok: break
         box = [float(row[key]) for key in ("x", "y", "width", "height")]
+        template_image, search_image = crop(template_frame, template_box, 127), crop(frame, box, 255)
         first, second = out / f"template_{index:03d}.npy", out / f"search_{index:03d}.npy"
-        np.save(first, template_feature); np.save(second, run(backbone, crop(frame, box, 255)))
+        np.save(first, template_feature); np.save(second, run(backbone, search_image))
+        template_png, search_png = out / f"template_{index:03d}.png", out / f"search_{index:03d}.png"
+        if not cv2.imwrite(str(template_png), template_image) or not cv2.imwrite(str(search_png), search_image): raise SystemExit("cannot write calibration image")
         dataset.append(f"{first} {second}")
+        template_images.append(str(template_png)); search_images.append(str(search_png))
     (out / "dataset.txt").write_text("\n".join(dataset) + "\n")
+    (out / "template_images.txt").write_text("\n".join(template_images) + "\n")
+    (out / "search_images.txt").write_text("\n".join(search_images) + "\n")
     print(f"wrote {len(dataset)} feature pairs to {out}")
 
 if __name__ == "__main__": main()
