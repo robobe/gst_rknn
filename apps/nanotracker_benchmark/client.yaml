@@ -1,0 +1,4 @@
+server_url: http://radxa:8000
+client_host: 10.100.102.15
+video_port: 5004
+metadata_port: 5005

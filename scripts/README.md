@@ -8,6 +8,9 @@ them with `RADXA_HOST`, `RADXA_USER`, and `RADXA_ROOT`.
 | `./scripts/deploy.sh plugin` | Deploy all built `.so` modules and `plugin_list.md`. |
 | `./scripts/deploy.sh models` | Deploy model directories. |
 | `./scripts/deploy.sh assets` | Deploy generated videos, ground truth, and the comparator. |
+| `./scripts/deploy.sh datasets` | Rsync `/home/user/datasets/` to `/home/radxa/gst-rknn/datasets/`; override the source with `DATASETS_DIR`. It never deletes remote files. |
+| `./scripts/deploy.sh benchmark` | Deploy the NanoTracker benchmark application source. |
+| `./scripts/deploy.sh benchmark-setup` | Deploy the benchmark source and create/update its Radxa Python venv. |
 | `./scripts/deploy.sh all` | Deploy plugins, models, and assets. |
 | `./scripts/remote-test.sh inspect` | Inspect the `rknnhello` plugin. |
 | `./scripts/remote-test.sh smoke` | Run the one-frame hello pipeline. |
@@ -18,6 +21,7 @@ them with `RADXA_HOST`, `RADXA_USER`, and `RADXA_ROOT`.
 | `./scripts/nanotracker/test.sh bench` | Run five V3 INT8 RGA/fakesink passes and print post-warm-up median FPS; set `NANOTRACK_PRECISION=mixed` or `int8-mmse` to compare. |
 | `./scripts/nanotracker/test.sh matrix` | Compare deployed V3 `mixed`, `int8`, and `int8-mmse` profiles on the 500-frame video; writes the guide's CSV, SVG, and results table. |
 | `./scripts/nanotracker/stream.sh` | Stream NanoTracker H.264/RTP video and ROI metadata to `video-metadata-viewer`. |
+| `./scripts/nanotracker-benchmark-server.sh` | Run the Radxa FastAPI NanoTracker benchmark server. |
 | `./scripts/nanotracker12/test.sh inspect` | Inspect the independent NanoTrack V1/V2 element. |
 | `./scripts/nanotracker12/test.sh smoke v1\|v2` | Run 60 BGR frames through the selected V1 or V2 model. |
 | `./scripts/nanotracker12/test.sh video v1\|v2` | Write selected-version tracking metadata for the 500-frame synthetic video. |
