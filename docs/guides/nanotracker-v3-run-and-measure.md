@@ -67,9 +67,9 @@ not included because `nanotrack_head.rknn` is not deployed.
 <!-- profile-results:start -->
 | Profile | Median FPS | Mean IoU | Minimum IoU | Matched frames |
 | --- | ---: | ---: | ---: | ---: |
-| `mixed` | 32.06 | 0.9344 | 0.9125 | 500 |
-| `int8` | 53.30 | 0.9367 | 0.8990 | 500 |
-| `int8-mmse` | 52.88 | 0.9428 | 0.8988 | 500 |
+| `mixed` | 31.95 | 0.9344 | 0.9125 | 500 |
+| `int8` | 52.56 | 0.9367 | 0.8990 | 500 |
+| `int8-mmse` | 53.05 | 0.9428 | 0.8988 | 500 |
 
 ![NanoTrack V3 profile comparison](images/nanotracker-v3-profile-comparison.svg)
 <!-- profile-results:end -->

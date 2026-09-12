@@ -11,7 +11,8 @@ Rockchip-optimized `yolov8n.onnx` to `onnx/`, then make `calibration.txt` with
 one representative camera-image path per line:
 
 ```sh
-python3 models/yolov8/tools/convert_rknn.py \
+./scripts/ensure-rknn-toolkit.sh
+.venv-rknn/bin/python models/yolov8/tools/convert_rknn.py \
   --dataset /path/to/calibration.txt
 ```
 

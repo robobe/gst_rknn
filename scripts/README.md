@@ -12,6 +12,8 @@ them with `RADXA_HOST`, `RADXA_USER`, and `RADXA_ROOT`.
 | `./scripts/deploy.sh benchmark` | Deploy the NanoTracker benchmark application source. |
 | `./scripts/deploy.sh benchmark-setup` | Deploy the benchmark source and create/update its Radxa Python venv. |
 | `./scripts/deploy.sh all` | Deploy plugins, models, and assets. |
+| `./scripts/ensure-rknn-toolkit.sh` | Create/update the host Python 3.12 `uv` environment with RKNN-Toolkit2 2.3.2. |
+| `sudo ./scripts/install-rknn-runtime-2.3.2.sh` | Install the staged RKNN 2.3.2 board runtime and save a system backup. |
 | `./scripts/remote-test.sh inspect` | Inspect the `rknnhello` plugin. |
 | `./scripts/remote-test.sh smoke` | Run the one-frame hello pipeline. |
 | `./scripts/nanotracker/test.sh inspect` | Inspect `rknnnanotrack`. |

@@ -3,6 +3,7 @@ set -euo pipefail
 
 sysroot=${RADXA_SYSROOT:-/home/user/sysroots/radxa}
 target="${RADXA_USER:-radxa}@${RADXA_HOST:-radxa}"
+"$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/ensure-rknn-toolkit.sh"
 mkdir -p "$sysroot"
 
 for directory in lib usr/lib usr/include usr/share/pkgconfig; do

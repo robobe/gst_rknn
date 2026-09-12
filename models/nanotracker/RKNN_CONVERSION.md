@@ -8,9 +8,8 @@ tr -d '\0' </proc/device-tree/compatible; echo
 
 Use [RKNN-Toolkit2](https://github.com/airockchip/rknn-toolkit2) on the development machine and set `target_platform='rk3566'`. Rockchip lists RK3566/RK3568 as Toolkit2 targets and separates conversion on the development machine from C/C++ runtime inference on the board. Keep the Toolkit2 release and the board's `librknnrt.so` from the same RKNPU2 SDK release. Do not use the older, incompatible `rknn-toolkit`.
 
-This board currently reports `rknn_server` 2.3.0. Start with the matching
-Toolkit2 2.3.0 package; upgrade Toolkit2 and the board runtime together, not
-independently.
+Use the matching Toolkit2 2.3.2 package from `.venv-rknn`; upgrade Toolkit2
+and the board runtime together, not independently.
 
 On the tested Python 3.12 conversion host, Toolkit2 2.3.0 needs
 `onnx==1.16.2` (it uses the legacy `onnx.mapping` API) and `setuptools<81`

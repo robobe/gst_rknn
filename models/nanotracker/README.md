@@ -21,10 +21,11 @@ not use arbitrary images for head INT8 calibration. See
 [RKNN_CONVERSION.md](RKNN_CONVERSION.md) for source links, quantization, and
 performance validation.
 
-The current board runtime is RKNN 2.3.0, so use the matching Toolkit2 2.3.0
-package for conversion.
+The current conversion target is RKNN 2.3.2. Run
+`./scripts/ensure-rknn-toolkit.sh` and use `.venv-rknn/bin/python` for
+conversion.
 
-The tested conversion-host dependency pins are `rknn-toolkit2==2.3.0`,
+The tested conversion-host dependency pins are `rknn-toolkit2==2.3.2`,
 `onnx==1.16.2`, and `setuptools<81`.
 `tools/generate_calibration.py` creates synthetic-video image and feature
 calibration data. Build profiles with `tools/convert_rknn.py --profile mixed`,

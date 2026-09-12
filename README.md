@@ -16,6 +16,10 @@ sudo apt install cmake ninja-build pkg-config rsync openssh-client \
 Ensure `ssh radxa@radxa` works. Override the default board connection or paths
 with `RADXA_HOST`, `RADXA_USER`, `RADXA_ROOT`, and `RADXA_SYSROOT`.
 
+`sync-sysroot.sh` creates/updates `.venv-rknn` with `uv` and pins
+RKNN-Toolkit2 to 2.3.2 before copying target libraries. Use its Python for all
+ONNX-to-RKNN conversions: `.venv-rknn/bin/python`.
+
 ## First bring-up
 
 ```sh

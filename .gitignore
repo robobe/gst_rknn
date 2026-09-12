@@ -1,4 +1,5 @@
 /build/
+.venv-rknn/
 /assets/nanotracker/move_right_500.mp4
 /demos/nanotracker/synthetic/move_right_500.csv
 __pycache__/
