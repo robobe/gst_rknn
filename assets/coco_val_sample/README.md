@@ -4,3 +4,7 @@
 (seed `20260912`) and COCO-format annotation file. Images, annotations, and
 benchmark output are local evaluation assets and are intentionally ignored by
 Git. Run `./scripts/deploy.sh assets` to copy the subset to the Radxa.
+
+Use `tools/fetch_coco_val_sample.py --split train` to create the separate
+`assets/coco_train_sample` calibration subset. Do not use this validation set
+for quantization calibration.

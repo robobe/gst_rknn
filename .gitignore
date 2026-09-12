@@ -5,6 +5,14 @@
 /assets/coco_val_sample/annotations.json
 /assets/coco_val_sample/predictions.json
 /assets/coco_val_sample/benchmark.json
+/assets/coco_val_sample/predictions-*.json
+/assets/coco_val_sample/benchmark-*.json
+/assets/coco_train_sample/images/
+/assets/coco_train_sample/annotations.json
+/assets/coco_train_sample/calibration.txt
+models/yolov8/onnx/
+models/yolov8/rknn/*.rknn
+models/yolov8/hybrid-work/
 /demos/nanotracker/synthetic/move_right_500.csv
 __pycache__/
 *.pyc

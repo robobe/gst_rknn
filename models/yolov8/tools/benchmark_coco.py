@@ -47,9 +47,12 @@ def nms(boxes, scores, classes, threshold=.45):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, default=ROOT / "assets" / "coco_val_sample")
-    parser.add_argument("--model", type=Path, default=ROOT / "models" / "yolov8" / "rknn" / "yolov8n-rk3566-int8.rknn")
+    parser.add_argument("--profile", choices=("int8", "hybrid-int8"), default="int8")
+    parser.add_argument("--model", type=Path)
     parser.add_argument("--threshold", type=float, default=.25)
     args = parser.parse_args()
+    if args.model is None:
+        args.model = ROOT / "models" / "yolov8" / "rknn" / f"yolov8n-rk3566-{args.profile}.rknn"
     annotations = json.loads((args.dataset / "annotations.json").read_text())
     rknn, predictions, timings = RKNNLite(verbose=False), [], []
     try:
@@ -65,10 +68,10 @@ def main():
                 predictions.append({"image_id": item["id"], "category_id": COCO_IDS[int(classes[index])], "bbox": [round(float(box[0]), 3), round(float(box[1]), 3), round(float(box[2] - box[0]), 3), round(float(box[3] - box[1]), 3)], "score": round(float(scores[index]), 6)})
         elapsed = time.perf_counter() - overall_start
     finally: rknn.release()
-    (args.dataset / "predictions.json").write_text(json.dumps(predictions))
+    (args.dataset / f"predictions-{args.profile}.json").write_text(json.dumps(predictions))
     measured = timings[min(10, len(timings)):]
-    (args.dataset / "benchmark.json").write_text(json.dumps({"images": len(annotations["images"]), "detections": len(predictions), "pipeline_fps": len(annotations["images"]) / elapsed, "inference_fps": len(measured) / sum(measured), "warmup_images": min(10, len(timings))}))
-    print(json.dumps(json.loads((args.dataset / "benchmark.json").read_text()), indent=2))
+    (args.dataset / f"benchmark-{args.profile}.json").write_text(json.dumps({"profile": args.profile, "images": len(annotations["images"]), "detections": len(predictions), "pipeline_fps": len(annotations["images"]) / elapsed, "inference_fps": len(measured) / sum(measured), "warmup_images": min(10, len(timings))}))
+    print(json.dumps(json.loads((args.dataset / f"benchmark-{args.profile}.json").read_text()), indent=2))
 
 
 if __name__ == "__main__": main()

@@ -41,8 +41,8 @@ on the board and render the host-side report:
 .venv-rknn/bin/python tools/fetch_coco_val_sample.py
 ./scripts/deploy.sh assets
 ./scripts/deploy.sh models
-ssh radxa@radxa 'python3 /home/radxa/gst-rknn/models/yolov8/tools/benchmark_coco.py --dataset /home/radxa/gst-rknn/assets/coco_val_sample'
-rsync -a radxa@radxa:/home/radxa/gst-rknn/assets/coco_val_sample/{predictions,benchmark}.json assets/coco_val_sample/
+ssh radxa@radxa 'python3 /home/radxa/gst-rknn/models/yolov8/tools/benchmark_coco.py --profile int8 --dataset /home/radxa/gst-rknn/assets/coco_val_sample'
+rsync -a radxa@radxa:/home/radxa/gst-rknn/assets/coco_val_sample/{predictions,benchmark}-int8.json assets/coco_val_sample/
 uv pip install --python .venv-rknn/bin/python pycocotools
 .venv-rknn/bin/python tools/report_yolo_coco.py
 ```
@@ -50,3 +50,30 @@ uv pip install --python .venv-rknn/bin/python pycocotools
 The images, annotations, detections, and timing JSON remain local under
 `assets/coco_val_sample/`; the generated comparison record is
 [`docs/guides/yolov8-coco-val-sample.md`](../../docs/guides/yolov8-coco-val-sample.md).
+
+## Hybrid-INT8 conversion with Toolkit2 2.3.2
+
+Hybrid conversion keeps only verified detection-output tensors in FP16 and
+quantizes the rest to INT8. It is a two-step review process: Step 1 creates
+the Toolkit configuration, and Step 2 builds only after the reviewed tensor
+names are provided. Do not reuse the validation sample for calibration.
+
+```sh
+./scripts/ensure-rknn-toolkit.sh
+.venv-rknn/bin/python tools/fetch_coco_val_sample.py --split train
+.venv-rknn/bin/python models/yolov8/tools/fetch_yolov8n_onnx.py
+.venv-rknn/bin/python models/yolov8/tools/convert_hybrid_rknn.py step1
+sed -n '1,80p' models/yolov8/hybrid-work/yolov8n.quantization.cfg
+# Copy the generated detection-output tensor names from custom_quantize_layers.
+.venv-rknn/bin/python models/yolov8/tools/convert_hybrid_rknn.py step2 \\
+  --fp16-layer <reviewed-output-tensor> --fp16-layer <reviewed-output-tensor>
+bash scripts/yolov8/hybrid-evaluate.sh
+```
+
+`hybrid-evaluate.sh` deploys both artifacts, runs both Model Zoo smoke tests
+and the same COCO validation benchmark, then writes
+[`docs/guides/yolov8-hybrid-int8-comparison.md`](../../docs/guides/yolov8-hybrid-int8-comparison.md).
+The complete procedure is in
+[`docs/guides/yolov8-hybrid-int8-conversion.md`](../../docs/guides/yolov8-hybrid-int8-conversion.md).
+The source ONNX URL and checksum are pinned by the fetch helper. The approach
+follows the [two-step FP16-output hybrid method](https://github.com/mahdieh-jokar/yolo26n-rknn-int8-quantization/blob/main/README.md), but uses the names Toolkit generates for this YOLOv8 graph.
