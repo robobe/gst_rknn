@@ -117,6 +117,8 @@ static GstFlowReturn transform_ip(GstBaseTransform *base, GstBuffer *buffer) {
     line << GST_BUFFER_PTS(buffer) << ',' << (type ? type : "") << ',' << roi->x << ','
          << roi->y << ',' << roi->w << ',' << roi->h << ',' << (initialized ? 1 : 0) << ',';
     if (has_confidence) line << confidence;
+    line << ',';
+    if (type && std::string(type) == "yolo8") line << roi->id;
     line << '\n';
     (void)send_packet(self->state, line.str());
   }

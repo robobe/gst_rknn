@@ -63,7 +63,7 @@ static gboolean start(GstBaseTransform *base) {
                       ("%s", self->state->location.c_str()));
     return FALSE;
   }
-  self->state->output << "pts_ns,roi_type,x,y,width,height,initialized,confidence\n";
+  self->state->output << "pts_ns,roi_type,x,y,width,height,initialized,confidence,class_id\n";
   return TRUE;
 }
 
@@ -91,6 +91,8 @@ static GstFlowReturn transform_ip(GstBaseTransform *base, GstBuffer *buffer) {
                         << roi->x << ',' << roi->y << ','
                         << roi->w << ',' << roi->h << ',' << (initialized ? 1 : 0) << ',';
     if (has_confidence) self->state->output << confidence;
+    self->state->output << ',';
+    if (type && std::string(type) == "yolo8") self->state->output << roi->id;
     self->state->output << '\n';
     if (!self->state->output) {
       GST_ELEMENT_ERROR(self, RESOURCE, WRITE, ("Cannot write CSV output"), (nullptr));

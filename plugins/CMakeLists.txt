@@ -1,3 +1,4 @@
 add_subdirectory(rknnhello)
 add_subdirectory(nanotracker)
 add_subdirectory(nanotracker12)
+add_subdirectory(yolov8)
