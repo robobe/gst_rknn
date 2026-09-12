@@ -1,6 +1,10 @@
 /build/
 .venv-rknn/
 /assets/nanotracker/move_right_500.mp4
+/assets/coco_val_sample/images/
+/assets/coco_val_sample/annotations.json
+/assets/coco_val_sample/predictions.json
+/assets/coco_val_sample/benchmark.json
 /demos/nanotracker/synthetic/move_right_500.csv
 __pycache__/
 *.pyc

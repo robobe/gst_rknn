@@ -31,3 +31,22 @@ The smoke test uses `rknn-toolkit-lite2` on the board, loads the model, runs
 the bundled Model Zoo `testdata/bus.jpg`, and compares its detections against
 Rockchip's published reference results. It is a regression check, not ground
 truth or an accuracy evaluation.
+
+## Reproducible COCO accuracy and FPS sample
+
+Create the fixed 200-image COCO val2017 subset, deploy it, then run evaluation
+on the board and render the host-side report:
+
+```sh
+.venv-rknn/bin/python tools/fetch_coco_val_sample.py
+./scripts/deploy.sh assets
+./scripts/deploy.sh models
+ssh radxa@radxa 'python3 /home/radxa/gst-rknn/models/yolov8/tools/benchmark_coco.py --dataset /home/radxa/gst-rknn/assets/coco_val_sample'
+rsync -a radxa@radxa:/home/radxa/gst-rknn/assets/coco_val_sample/{predictions,benchmark}.json assets/coco_val_sample/
+uv pip install --python .venv-rknn/bin/python pycocotools
+.venv-rknn/bin/python tools/report_yolo_coco.py
+```
+
+The images, annotations, detections, and timing JSON remain local under
+`assets/coco_val_sample/`; the generated comparison record is
+[`docs/guides/yolov8-coco-val-sample.md`](../../docs/guides/yolov8-coco-val-sample.md).
