@@ -51,8 +51,8 @@ class StreamViewer:
         self.thread = threading.Thread(target=self._metadata, daemon=True)
         self.thread.start()
         self.pipeline = Gst.parse_launch(
-            f'udpsrc port={self.video_port} caps="application/x-rtp,media=video,encoding-name=H264,payload=96,clock-rate=90000" ! '
-            'rtpjitterbuffer latency=50 drop-on-latency=true ! rtph264depay ! h264parse ! avdec_h264 ! '
+            f'udpsrc port={self.video_port} caps="application/x-rtp,media=video,encoding-name=JPEG,payload=26,clock-rate=90000" ! '
+            'rtpjitterbuffer latency=200 drop-on-latency=false ! rtpjpegdepay ! jpegdec ! '
             'videoconvert ! video/x-raw,format=BGR ! appsink name=sink sync=false max-buffers=1 drop=true'
         )
         self.sink = self.pipeline.get_by_name("sink")
@@ -113,34 +113,51 @@ class Client:
         config = yaml.safe_load(Path(config_path).read_text()) or {}
         self.api, self.client_host = Api(config["server_url"]), config["client_host"]
         self.video_port, self.metadata_port = int(config["video_port"]), int(config["metadata_port"])
-        self.state_path = Path.home() / ".config" / "gst-rknn" / "nanotracker-benchmark-state.yaml"
-        Gst.init(None); self.catalog = {}; self.viewer = self.run_id = self.roi = self.terminal_at = None
+        self.state_path = Path.home() / ".config" / "gst-rknn" / "nanotracker-benchmark-last-run.yaml"
+        Gst.init(None); self.catalog = {}; self.viewer = self.run_id = self.roi = self.terminal_at = None; self.last_run_id = None
         self.next_server_check = self.next_run_check = 0.0
         self.root = tk.Tk(); self.root.title("NanoTracker benchmark"); self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.source, self.ground_truth = tk.StringVar(), tk.StringVar()
         self.dataset, self.tracker, self.rate = tk.StringVar(value="Ad-hoc source"), tk.StringVar(), tk.StringVar(value="Auto")
-        self.status = tk.StringVar(value="Connecting to benchmark server")
+        self.saved_run, self.preset_name = tk.StringVar(), tk.StringVar()
+        self.saved_items = {}
+        self.server_status, self.status = tk.StringVar(value="Server: connecting"), tk.StringVar(value="Connecting to benchmark server")
         self._build(); self._load_catalog(); self.root.after(30, self.tick)
 
     def _build(self):
         panel = ttk.Frame(self.root, padding=12); panel.grid(sticky="nsew")
-        for row, label in enumerate(("Dataset", "Source", "Ground truth", "Tracker", "Playback FPS")):
-            ttk.Label(panel, text=label).grid(row=row, column=0, sticky="w", pady=3)
-        self.dataset_box = ttk.Combobox(panel, textvariable=self.dataset, state="readonly", width=52); self.dataset_box.grid(row=0, column=1, sticky="ew", pady=3); self.dataset_box.bind("<<ComboboxSelected>>", lambda _: self.choose_dataset())
-        ttk.Entry(panel, textvariable=self.source, width=52).grid(row=1, column=1, sticky="ew", pady=3); ttk.Button(panel, text="Browse", command=self.browse).grid(row=1, column=2, padx=(6, 0))
-        ttk.Entry(panel, textvariable=self.ground_truth, width=52).grid(row=2, column=1, sticky="ew", pady=3)
-        self.tracker_box = ttk.Combobox(panel, textvariable=self.tracker, state="readonly", width=52); self.tracker_box.grid(row=3, column=1, sticky="ew", pady=3)
-        ttk.Combobox(panel, textvariable=self.rate, values=("Auto", "1", "5", "10", "20", "30"), state="readonly", width=52).grid(row=4, column=1, sticky="ew", pady=3)
-        ttk.Button(panel, text="Preview / select ROI", command=self.preview).grid(row=5, column=0, columnspan=2, sticky="ew", pady=(8, 3)); ttk.Button(panel, text="Start benchmark", command=self.start).grid(row=5, column=2, sticky="ew", padx=(6, 0), pady=(8, 3))
-        ttk.Button(panel, text="Stop", command=self.stop).grid(row=6, column=2, sticky="ew", padx=(6, 0), pady=3)
-        footer = ttk.Frame(panel); footer.grid(row=6, column=0, columnspan=2, sticky="w")
-        self.server_led = tk.Canvas(footer, width=14, height=14, highlightthickness=0)
+        connection = ttk.Frame(panel); connection.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        self.server_led = tk.Canvas(connection, width=14, height=14, highlightthickness=0)
         self.server_led.pack(side="left", padx=(0, 4)); self.led_item = self.server_led.create_oval(2, 2, 12, 12, fill="#c62828", outline="")
-        ttk.Label(footer, text="Server").pack(side="left", padx=(0, 8)); ttk.Label(footer, textvariable=self.status, wraplength=480).pack(side="left")
+        ttk.Label(connection, textvariable=self.server_status).pack(side="left")
+        ttk.Label(panel, text="Recent / preset").grid(row=1, column=0, sticky="nw", pady=3)
+        saved_frame = ttk.Frame(panel); saved_frame.grid(row=1, column=1, rowspan=2, sticky="nsew", pady=3)
+        self.saved_run_list = tk.Listbox(saved_frame, height=5, exportselection=False)
+        saved_scroll = ttk.Scrollbar(saved_frame, orient="vertical", command=self.saved_run_list.yview)
+        self.saved_run_list.configure(yscrollcommand=saved_scroll.set)
+        self.saved_run_list.pack(side="left", fill="both", expand=True); saved_scroll.pack(side="right", fill="y")
+        self.saved_run_list.bind("<<ListboxSelect>>", lambda _: self.load_saved_run())
+        preset_actions = ttk.Frame(panel); preset_actions.grid(row=1, column=2, padx=(6, 0))
+        ttk.Button(preset_actions, text="Save", command=self.save_preset).pack(side="top", fill="x")
+        ttk.Button(preset_actions, text="Rename", command=self.rename_preset).pack(side="top", fill="x", pady=(3, 0))
+        ttk.Label(panel, text="Preset name").grid(row=3, column=0, sticky="w", pady=3)
+        ttk.Entry(panel, textvariable=self.preset_name, width=52).grid(row=3, column=1, sticky="ew", pady=3)
+        for row, label in enumerate(("Dataset", "Source", "Ground truth", "Tracker", "Playback FPS"), start=4):
+            ttk.Label(panel, text=label).grid(row=row, column=0, sticky="w", pady=3)
+        self.dataset_box = ttk.Combobox(panel, textvariable=self.dataset, state="readonly", width=52); self.dataset_box.grid(row=4, column=1, sticky="ew", pady=3); self.dataset_box.bind("<<ComboboxSelected>>", lambda _: self.choose_dataset())
+        ttk.Entry(panel, textvariable=self.source, width=52).grid(row=5, column=1, sticky="ew", pady=3); ttk.Button(panel, text="Browse", command=self.browse).grid(row=5, column=2, padx=(6, 0))
+        ttk.Entry(panel, textvariable=self.ground_truth, width=52).grid(row=6, column=1, sticky="ew", pady=3); ttk.Button(panel, text="Browse", command=lambda: self.browse(ground_truth=True)).grid(row=6, column=2, padx=(6, 0))
+        self.tracker_box = ttk.Combobox(panel, textvariable=self.tracker, state="readonly", width=52); self.tracker_box.grid(row=7, column=1, sticky="ew", pady=3)
+        ttk.Combobox(panel, textvariable=self.rate, values=("Auto", "1", "5", "10", "20", "30"), state="readonly", width=52).grid(row=8, column=1, sticky="ew", pady=3)
+        ttk.Button(panel, text="Preview / select ROI", command=self.preview).grid(row=9, column=0, sticky="ew", pady=(8, 3)); ttk.Button(panel, text="Play source", command=lambda: self.start(source_only=True)).grid(row=9, column=1, sticky="ew", padx=(6, 0), pady=(8, 3)); ttk.Button(panel, text="Start benchmark", command=self.start).grid(row=9, column=2, sticky="ew", padx=(6, 0), pady=(8, 3))
+        ttk.Button(panel, text="Show pipeline", command=self.show_pipeline).grid(row=10, column=1, sticky="ew", pady=3)
+        ttk.Button(panel, text="Stop", command=self.stop).grid(row=10, column=2, sticky="ew", padx=(6, 0), pady=3)
+        ttk.Label(panel, textvariable=self.status, wraplength=620, justify="left").grid(row=11, column=0, columnspan=3, sticky="ew", pady=(8, 0))
         panel.columnconfigure(1, weight=1)
 
     def set_server_connected(self, connected):
         self.server_led.itemconfigure(self.led_item, fill="#249447" if connected else "#c62828")
+        self.server_status.set("Server: connected" if connected else "Server: unavailable")
 
     def _load_catalog(self):
         try:
@@ -149,18 +166,30 @@ class Client:
             self.tracker_labels = {item["label"]: item["id"] for item in self.catalog["trackers"]}
             self.tracker_box.configure(values=list(self.tracker_labels)); self.tracker.set(next(iter(self.tracker_labels)))
             self.load_last_selection()
+            self.refresh_saved_runs()
             self.set_server_connected(True)
             self.status.set("Choose a dataset or browse a Radxa source")
         except RuntimeError as error:
             self.set_server_connected(False); self.status.set(f"Server unavailable: {error}")
 
-    def load_last_selection(self):
+    def state_document(self):
         try:
             state = yaml.safe_load(self.state_path.read_text()) or {}
         except (OSError, yaml.YAMLError):
-            return
+            return {"recent_runs": [], "presets": {}}
         if not isinstance(state, dict):
-            return
+            return {"recent_runs": [], "presets": {}}
+        if "last_run" not in state and "source_path" in state:
+            state = {"last_run": state, "recent_runs": [state], "presets": {}}
+        state.setdefault("recent_runs", []); state.setdefault("presets", {})
+        return state
+
+    def write_state(self, state):
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        self.state_path.write_text(yaml.safe_dump(state, sort_keys=False))
+
+    def apply_selection(self, state):
+        self.roi = None
         for variable, key in ((self.source, "source_path"), (self.ground_truth, "ground_truth"), (self.rate, "playback_fps")):
             if isinstance(state.get(key), str):
                 variable.set(state[key])
@@ -171,14 +200,65 @@ class Client:
         if state.get("dataset") in self.dataset_box["values"]:
             self.dataset.set(state["dataset"])
         roi = state.get("roi")
-        if isinstance(roi, dict) and all(isinstance(roi.get(key), int) for key in ("x", "y", "width", "height")):
+        if state.get("roi_size") == [640, 360] and isinstance(roi, dict) and all(isinstance(roi.get(key), int) for key in ("x", "y", "width", "height")):
             self.roi = roi
 
+    def load_last_selection(self):
+        state = self.state_document().get("last_run")
+        if isinstance(state, dict): self.apply_selection(state)
+
+    def selection(self, payload=None):
+        payload = payload or {"tracker_id": self.tracker_labels.get(self.tracker.get(), ""), "roi": self.roi,
+                              "playback_fps": self.rate.get(), "ground_truth": self.ground_truth.get() or None,
+                              "source_path": self.source.get(), "client_host": self.client_host,
+                              "video_port": self.video_port, "metadata_port": self.metadata_port}
+        return {"dataset": self.dataset.get(), "source_path": payload["source_path"], "ground_truth": payload["ground_truth"] or "",
+                "tracker_id": payload["tracker_id"], "playback_fps": payload["playback_fps"], "roi": payload["roi"], "roi_size": [640, 360],
+                "client_host": payload["client_host"], "video_port": payload["video_port"], "metadata_port": payload["metadata_port"],
+                "source_only": payload["tracker_id"] == "source", "saved_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+
     def save_last_selection(self, payload):
-        self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        state = {"dataset": self.dataset.get(), "source_path": payload["source_path"], "ground_truth": payload["ground_truth"] or "",
-                 "tracker_id": payload["tracker_id"], "playback_fps": payload["playback_fps"], "roi": payload["roi"]}
-        self.state_path.write_text(yaml.safe_dump(state, sort_keys=False))
+        state, run = self.state_document(), self.selection(payload)
+        state["last_run"] = run; state["recent_runs"] = [run, *state["recent_runs"]][:10]
+        self.write_state(state); self.refresh_saved_runs(state)
+
+    def refresh_saved_runs(self, state=None):
+        state = state or self.state_document(); self.saved_items = {}
+        for index, run in enumerate(state["recent_runs"]):
+            if isinstance(run, dict):
+                label = f"Recent: {run.get('saved_at', '?')} | {Path(run.get('source_path', '?')).name}"
+                self.saved_items[f"{label} #{index + 1}"] = run
+        for name, run in state["presets"].items():
+            if isinstance(name, str) and isinstance(run, dict): self.saved_items[f"Preset: {name}"] = run
+        self.saved_run_list.delete(0, tk.END)
+        for label in self.saved_items: self.saved_run_list.insert(tk.END, label)
+
+    def load_saved_run(self):
+        choice = self.saved_run_list.curselection()
+        if not choice: return
+        self.saved_run.set(self.saved_run_list.get(choice[0]))
+        run = self.saved_items.get(self.saved_run.get())
+        if run:
+            self.apply_selection(run)
+            if self.saved_run.get().startswith("Preset: "): self.preset_name.set(self.saved_run.get()[8:])
+            self.status.set("Saved run loaded; preview again if you change the source")
+
+    def save_preset(self):
+        name = self.preset_name.get().strip()
+        if not name: self.status.set("Enter a preset name first"); return
+        state = self.state_document(); state["presets"][name] = self.selection()
+        self.write_state(state); self.refresh_saved_runs(state); self.saved_run.set(f"Preset: {name}")
+        self.status.set(f"Preset saved: {name}")
+
+    def rename_preset(self):
+        selected, name = self.saved_run.get(), self.preset_name.get().strip()
+        if not selected.startswith("Preset: ") or not name: self.status.set("Select a preset and enter its new name"); return
+        old = selected[8:]
+        if old == name: return
+        state = self.state_document()
+        if name in state["presets"]: self.status.set("That preset name already exists"); return
+        state["presets"][name] = state["presets"].pop(old); self.write_state(state); self.refresh_saved_runs(state)
+        self.saved_run.set(f"Preset: {name}"); self.status.set(f"Preset renamed: {name}")
 
     def choose_dataset(self):
         item = self.catalog["datasets"].get(self.dataset.get())
@@ -187,9 +267,9 @@ class Client:
         roi = item.get("initial_roi"); self.roi = dict(zip(("x", "y", "width", "height"), roi)) if roi else None
         self.status.set("Dataset loaded; preview to keep or replace its ROI")
 
-    def browse(self):
-        chooser = tk.Toplevel(self.root); chooser.title("Browse Radxa /home/radxa")
-        path, entries = tk.StringVar(value="/home/radxa"), tk.Listbox(chooser, width=80, height=20)
+    def browse(self, ground_truth=False):
+        chooser = tk.Toplevel(self.root); chooser.title("Select ground truth on Radxa" if ground_truth else "Browse Radxa /home/radxa")
+        path, entries = tk.StringVar(value="/home/radxa/gst-rknn/datasets"), tk.Listbox(chooser, width=80, height=20)
         ttk.Entry(chooser, textvariable=path, width=72).pack(padx=8, pady=5); entries.pack(fill="both", expand=True, padx=8, pady=5)
         def refresh(directory=None):
             try:
@@ -204,29 +284,37 @@ class Client:
             item = chooser.items[choice[0] - 1]
             if item["directory"]: refresh(item["path"])
             else:
-                self.source.set(item["path"]); self.dataset.set("Ad-hoc source"); self.ground_truth.set(""); self.roi = None; chooser.destroy()
+                if ground_truth:
+                    self.ground_truth.set(item["path"])
+                else:
+                    self.source.set(item["path"]); self.dataset.set("Ad-hoc source"); self.ground_truth.set(""); self.roi = None
+                chooser.destroy()
         def use_folder():
             self.source.set(path.get()); self.dataset.set("Ad-hoc source"); self.ground_truth.set(""); self.roi = None; chooser.destroy()
         ttk.Button(chooser, text="Refresh", command=refresh).pack(side="left", padx=8, pady=5)
-        ttk.Button(chooser, text="Use this folder", command=use_folder).pack(side="left", padx=8, pady=5)
+        if not ground_truth: ttk.Button(chooser, text="Use this folder", command=use_folder).pack(side="left", padx=8, pady=5)
         entries.bind("<Double-Button-1>", select); refresh()
 
     def preview(self):
         try:
             reply = self.api.request("POST", "/v1/previews", {"source_path": self.source.get(), "playback_fps": self.rate.get()})
             frame = cv2.imdecode(np.frombuffer(self.api.request("GET", reply["url"], binary=True), dtype=np.uint8), cv2.IMREAD_COLOR)
+            frame = cv2.resize(frame, (640, 360), interpolation=cv2.INTER_AREA)
             selected = cv2.selectROI("Select tracker ROI", frame, showCrosshair=True, fromCenter=False); cv2.destroyWindow("Select tracker ROI")
             if selected[2] > 0 and selected[3] > 0:
                 self.roi = dict(zip(("x", "y", "width", "height"), map(int, selected))); self.status.set(f"ROI selected: {self.roi}")
             elif self.roi: self.status.set("ROI selection cancelled; keeping dataset ROI")
         except RuntimeError as error: self.status.set(f"Preview failed: {error}")
 
-    def start(self):
-        if not self.roi: self.status.set("Preview and select an ROI first"); return
-        payload = {"source_path": self.source.get(), "ground_truth": self.ground_truth.get() or None, "tracker_id": self.tracker_labels.get(self.tracker.get(), ""), "roi": self.roi, "client_host": self.client_host, "video_port": self.video_port, "metadata_port": self.metadata_port, "playback_fps": self.rate.get()}
+    def start(self, source_only=False):
+        if not source_only and not self.roi: self.status.set("Preview and select an ROI first"); return
+        payload = {"source_path": self.source.get(), "ground_truth": None if source_only else self.ground_truth.get() or None,
+                   "tracker_id": "source" if source_only else self.tracker_labels.get(self.tracker.get(), ""),
+                   "roi": self.roi or {"x": 0, "y": 0, "width": 1, "height": 1}, "client_host": self.client_host,
+                   "video_port": self.video_port, "metadata_port": self.metadata_port, "playback_fps": self.rate.get()}
         try:
             self.viewer = StreamViewer(self.video_port, self.metadata_port); self.viewer.start()
-            self.run_id = self.api.request("POST", "/v1/runs", payload)["id"]; self.status.set(f"Running {self.run_id}")
+            self.run_id = self.api.request("POST", "/v1/runs", payload)["id"]; self.last_run_id = self.run_id; self.status.set(f"Playing {self.run_id}" if source_only else f"Running {self.run_id}")
             self.save_last_selection(payload)
         except RuntimeError as error:
             if self.viewer: self.viewer.close(); self.viewer = None
@@ -236,6 +324,23 @@ class Client:
         if self.run_id:
             try: self.api.request("POST", f"/v1/runs/{self.run_id}/stop")
             except RuntimeError as error: self.status.set(f"Stop failed: {error}")
+
+    def show_pipeline(self):
+        run_id = self.run_id or self.last_run_id
+        if not run_id:
+            self.status.set("Start a run first")
+            return
+        try:
+            pipeline = self.api.request("GET", f"/v1/runs/{run_id}").get("pipeline")
+        except RuntimeError as error:
+            self.status.set(f"Pipeline unavailable: {error}")
+            return
+        if not pipeline:
+            self.status.set("Pipeline is not ready yet")
+            return
+        window = tk.Toplevel(self.root); window.title(f"Pipeline: {run_id}")
+        text = tk.Text(window, width=108, height=8, wrap="word"); text.pack(fill="both", expand=True, padx=8, pady=8)
+        text.insert("1.0", pipeline); text.configure(state="disabled")
 
     def tick(self):
         now = time.monotonic()

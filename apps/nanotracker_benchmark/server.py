@@ -62,10 +62,12 @@ class Run:
     client_metrics: dict | None = None
 
     def public(self):
+        pipeline_file = self.directory / "pipeline.txt"
         return {
             "id": self.id, "status": self.status, "error": self.error,
             "artifacts": sorted(path.name for path in self.directory.iterdir()) if self.directory.exists() else [],
             "client_metrics": self.client_metrics,
+            "pipeline": pipeline_file.read_text().strip() if pipeline_file.is_file() else None,
         }
 
 
@@ -170,9 +172,10 @@ class Service:
 
     def start(self, command):
         _source, source_args = self.source_args(command.source_path, command.playback_fps)
-        if command.tracker_id not in self.trackers:
+        source_only = command.tracker_id == "source"
+        if not source_only and command.tracker_id not in self.trackers:
             raise ValueError("unknown tracker_id")
-        if command.ground_truth:
+        if command.ground_truth and not source_only:
             ground_truth = self.inside_root(command.ground_truth, "ground_truth")
             if not ground_truth.is_file():
                 raise ValueError("ground_truth does not exist")
@@ -186,11 +189,15 @@ class Service:
             self.runs[run_id] = run
             self.active = run_id
         prediction, log, pipeline_file = directory / "predictions.csv", directory / "pipeline.log", directory / "pipeline.txt"
-        tracker = self.trackers[command.tracker_id]
-        args = source_args + ["!", *tracker.gst_args(command.roi), "!", "roi2csv", f"location={prediction}", "!", "roi2udp",
-               f"host={command.client_host}", f"port={command.metadata_port}", "!", "videoconvert", "!", "video/x-raw,format=I420", "!",
-               "x264enc", "tune=zerolatency", "speed-preset=ultrafast", "bitrate=2000", "key-int-max=30", "bframes=0", "!", "h264parse", "!",
-               "rtph264pay", "pt=96", "config-interval=1", "!", "udpsink", f"host={command.client_host}", f"port={command.video_port}", "sync=false", "async=false"]
+        args = source_args + ["!", "videoscale", "!", "videoconvert", "!", "video/x-raw,format=BGR,width=640,height=360"]
+        if source_only:
+            args += ["!", "videoconvert", "!", "video/x-raw,format=I420", "!"]
+        else:
+            tracker = self.trackers[command.tracker_id]
+            args += ["!", *tracker.gst_args(command.roi), "!", "roi2csv", f"location={prediction}", "!", "roi2udp",
+                     f"host={command.client_host}", f"port={command.metadata_port}", "!", "videoconvert", "!", "video/x-raw,format=I420", "!"]
+        args += ["jpegenc", "quality=85", "!", "rtpjpegpay", "pt=26", "!", "udpsink",
+                 f"host={command.client_host}", f"port={command.video_port}", "sync=true", "async=false"]
         process_args = ["gst-launch-1.0", "-q", *args]
         pipeline_file.write_text(" ".join(process_args) + "\n")
         (directory / "request.json").write_text(json.dumps(command.json(), indent=2) + "\n")
@@ -216,14 +223,15 @@ class Service:
                 rows = list(csv.DictReader(source))
         confidence = [float(row["confidence"]) for row in rows if row.get("confidence")]
         elapsed = max((run.ended_at or time.monotonic()) - run.started_at, 1e-9)
-        summary = {"run_id": run.id, "status": run.status, "error": run.error, "server_elapsed_s": round(elapsed, 6),
-                   "server_fps": round(len(rows) / elapsed, 2), "tracker_rows": len(rows),
+        source_only = run.command.tracker_id == "source"
+        summary = {"run_id": run.id, "mode": "source" if source_only else "tracker", "status": run.status, "error": run.error, "server_elapsed_s": round(elapsed, 6),
+                   "server_fps": None if source_only else round(len(rows) / elapsed, 2), "tracker_rows": len(rows),
                    "mean_confidence": round(sum(confidence) / len(confidence), 4) if confidence else None,
                    "low_confidence_threshold": 0.5,
                    "low_confidence_frames": sum(value < 0.5 for value in confidence),
                    "initialized_frames": sum(row.get("initialized") == "1" for row in rows),
                    "client_metrics": run.client_metrics}
-        if run.command.ground_truth and prediction.exists():
+        if not source_only and run.command.ground_truth and prediction.exists():
             report = run.directory / "iou.txt"
             comparator = self.install_root / "assets/nanotracker/compare_nanotracker_csv.py"
             result = subprocess.run([sys.executable, str(comparator), run.command.ground_truth, str(prediction)], text=True, capture_output=True)
@@ -267,9 +275,9 @@ def build_app(config_path):
         return {"datasets": service.dataset_catalog(), "trackers": [asdict(item) for item in service.trackers.values()], "playback_fps": FPS_CHOICES}
 
     @app.get("/v1/browse")
-    def browse(path: str = "/home/radxa"):
+    def browse(path: str | None = None):
         try:
-            directory = service.inside_root(path)
+            directory = service.inside_root(path or service.install_root / "datasets")
             if not directory.is_dir():
                 raise ValueError("path is not a directory")
             entries = [{"name": item.name, "path": str(item), "directory": item.is_dir()} for item in sorted(directory.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower()))]

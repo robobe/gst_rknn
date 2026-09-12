@@ -60,7 +60,7 @@ def main():
     threading.Thread(target=viewer.receive_metadata, daemon=True).start()
     pipeline = Gst.parse_launch(
         f'udpsrc port={args.video_port} caps="application/x-rtp,media=video,encoding-name=H264,payload=96,clock-rate=90000" ! '
-        'rtpjitterbuffer latency=50 drop-on-latency=true ! rtph264depay ! h264parse ! avdec_h264 ! '
+        'rtpjitterbuffer latency=200 drop-on-latency=false ! rtph264depay ! h264parse ! avdec_h264 ! '
         'videoconvert ! video/x-raw,format=BGRA ! cairooverlay name=overlay ! videoconvert ! '
         'fpsdisplaysink video-sink=autovideosink text-overlay=true sync=false'
     )

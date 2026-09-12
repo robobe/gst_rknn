@@ -88,8 +88,8 @@ Then send the board stream, setting the host address if needed:
 VIDEO_METADATA_HOST=192.168.1.10 ./scripts/nanotracker/stream.sh
 ```
 
-The sender pipeline appends `roi2udp`, converts to I420, encodes H.264 with
-`x264enc`, packetizes with `rtph264pay`, and sends RTP/UDP port 5004. `roi2udp`
+The sender pipeline appends `roi2udp`, converts to I420, encodes H.264 with the
+Radxa hardware `mpph264enc` at 4 Mb/s, packetizes with `rtph264pay`, and sends RTP/UDP port 5004. `roi2udp`
 sends the tracker ROI separately to UDP port 5005. The viewer combines that
 metadata with the decoded video in a Cairo overlay.
 
