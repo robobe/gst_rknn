@@ -12,6 +12,7 @@
 struct State {
   std::string location;
   std::ofstream output;
+  guint64 frame_id = 0;
 };
 
 typedef struct _GstRknnMetaCsv {
@@ -63,7 +64,8 @@ static gboolean start(GstBaseTransform *base) {
                       ("%s", self->state->location.c_str()));
     return FALSE;
   }
-  self->state->output << "pts_ns,roi_type,x,y,width,height,initialized,confidence,class_id\n";
+  self->state->frame_id = 0;
+  self->state->output << "pts_ns,roi_type,x,y,width,height,initialized,confidence,class_id,frame_id\n";
   return TRUE;
 }
 
@@ -75,6 +77,7 @@ static gboolean stop(GstBaseTransform *base) {
 
 static GstFlowReturn transform_ip(GstBaseTransform *base, GstBuffer *buffer) {
   auto *self = reinterpret_cast<GstRknnMetaCsv *>(base);
+  const guint64 frame_id = self->state->frame_id++;
   gpointer cursor = nullptr;
   while (auto *raw = gst_buffer_iterate_meta_filtered(
              buffer, &cursor, GST_VIDEO_REGION_OF_INTEREST_META_API_TYPE)) {
@@ -93,7 +96,7 @@ static GstFlowReturn transform_ip(GstBaseTransform *base, GstBuffer *buffer) {
     if (has_confidence) self->state->output << confidence;
     self->state->output << ',';
     if (type && std::string(type) == "yolo8") self->state->output << roi->id;
-    self->state->output << '\n';
+    self->state->output << ',' << frame_id << '\n';
     if (!self->state->output) {
       GST_ELEMENT_ERROR(self, RESOURCE, WRITE, ("Cannot write CSV output"), (nullptr));
       return GST_FLOW_ERROR;

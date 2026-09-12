@@ -21,6 +21,7 @@ struct State {
   int socket = -1;
   sockaddr_storage destination{};
   socklen_t destination_length = 0;
+  guint64 frame_id = 0;
 };
 
 typedef struct _GstRoi2Udp { GstBaseTransform parent; State *state; } GstRoi2Udp;
@@ -91,6 +92,7 @@ static gboolean start(GstBaseTransform *base) {
                       ("%s:%u: %s", self->state->host.c_str(), self->state->port, g_strerror(errno)));
     return FALSE;
   }
+  self->state->frame_id = 0;
   return TRUE;
 }
 
@@ -103,6 +105,7 @@ static gboolean stop(GstBaseTransform *base) {
 
 static GstFlowReturn transform_ip(GstBaseTransform *base, GstBuffer *buffer) {
   auto *self = reinterpret_cast<GstRoi2Udp *>(base);
+  const guint64 frame_id = self->state->frame_id++;
   gpointer cursor = nullptr;
   while (auto *raw = gst_buffer_iterate_meta_filtered(
              buffer, &cursor, GST_VIDEO_REGION_OF_INTEREST_META_API_TYPE)) {
@@ -119,9 +122,12 @@ static GstFlowReturn transform_ip(GstBaseTransform *base, GstBuffer *buffer) {
     if (has_confidence) line << confidence;
     line << ',';
     if (type && std::string(type) == "yolo8") line << roi->id;
-    line << '\n';
+    line << ',' << frame_id << '\n';
     (void)send_packet(self->state, line.str());
   }
+  std::ostringstream marker;
+  marker << GST_BUFFER_PTS(buffer) << ",frame,,,,,,,," << frame_id << '\n';
+  (void)send_packet(self->state, marker.str());
   return GST_FLOW_OK;
 }
 
@@ -141,7 +147,7 @@ static void gst_roi2udp_class_init(GstRoi2UdpClass *klass) {
   g_object_class_install_property(object, PROP_HOST, g_param_spec_string("host", "Host", "Metadata UDP host", "", ready));
   g_object_class_install_property(object, PROP_PORT, g_param_spec_uint("port", "Port", "Metadata UDP port", 1, 65535, 5005, ready));
   gst_element_class_set_static_metadata(element, "ROI metadata UDP sender", "Filter/Diagnostics/Video",
-                                        "Sends one GstVideoRegionOfInterestMeta CSV record per UDP datagram", "gst-rknn");
+                                        "Sends ROI CSV records plus one frame-complete marker per buffer", "gst-rknn");
   gst_element_class_add_static_pad_template(element, &sink_template);
   gst_element_class_add_static_pad_template(element, &src_template);
   transform->start = start;

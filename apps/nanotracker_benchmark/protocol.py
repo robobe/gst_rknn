@@ -16,6 +16,17 @@ def _port(data, key):
     return value
 
 
+def metadata_packet(payload):
+    fields = payload.decode().strip().split(",")
+    if len(fields) != 10:
+        raise ValueError("metadata packet is incomplete")
+    frame_id, pts_ns, roi_type = int(fields[9]), int(fields[0]), fields[1]
+    if roi_type == "frame":
+        return frame_id, pts_ns, roi_type, None, None, None, None, "", "", None
+    return (frame_id, pts_ns, roi_type, *(int(value) for value in fields[2:6]), fields[6], fields[7],
+            int(fields[8]) if fields[8] else None)
+
+
 @dataclass(frozen=True)
 class Roi:
     x: int
@@ -37,22 +48,11 @@ class Roi:
 
 
 @dataclass(frozen=True)
-class PreviewCommand:
-    source_path: str
-    playback_fps: str
-
-    @classmethod
-    def from_json(cls, data):
-        return cls(_text(data, "source_path"), _text(data, "playback_fps"))
-
-
-@dataclass(frozen=True)
 class RunCommand:
     source_path: str
     tracker_id: str
-    roi: Roi
+    roi: Roi | None
     client_host: str
-    video_port: int
     metadata_port: int
     playback_fps: str
     ground_truth: str | None = None
@@ -63,8 +63,9 @@ class RunCommand:
         if ground_truth is not None and (not isinstance(ground_truth, str) or not ground_truth):
             raise ValueError("ground_truth must be text when supplied")
         return cls(
-            _text(data, "source_path"), _text(data, "tracker_id"), Roi.from_json(data.get("roi")),
-            _text(data, "client_host"), _port(data, "video_port"), _port(data, "metadata_port"),
+            _text(data, "source_path"), _text(data, "tracker_id"),
+            None if data.get("roi") is None else Roi.from_json(data.get("roi")),
+            _text(data, "client_host"), _port(data, "metadata_port"),
             _text(data, "playback_fps"), ground_truth,
         )
 
