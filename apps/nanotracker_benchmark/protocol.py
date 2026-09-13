@@ -56,17 +56,21 @@ class RunCommand:
     metadata_port: int
     playback_fps: str
     ground_truth: str | None = None
+    single_frame: bool = False
 
     @classmethod
     def from_json(cls, data):
         ground_truth = data.get("ground_truth")
         if ground_truth is not None and (not isinstance(ground_truth, str) or not ground_truth):
             raise ValueError("ground_truth must be text when supplied")
+        single_frame = data.get("single_frame", False)
+        if not isinstance(single_frame, bool):
+            raise ValueError("single_frame must be true or false")
         return cls(
             _text(data, "source_path"), _text(data, "tracker_id"),
             None if data.get("roi") is None else Roi.from_json(data.get("roi")),
             _text(data, "client_host"), _port(data, "metadata_port"),
-            _text(data, "playback_fps"), ground_truth,
+            _text(data, "playback_fps"), ground_truth, single_frame,
         )
 
     def json(self):

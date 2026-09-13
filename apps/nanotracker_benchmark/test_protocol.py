@@ -12,6 +12,8 @@ def main():
     detector = RunCommand.from_json({"source_path": "/home/radxa/a.mp4", "tracker_id": "yolov8n-int8", "roi": None,
                                      "client_host": "10.0.0.2", "metadata_port": 5005, "playback_fps": "30"})
     assert detector.roi is None
+    assert RunCommand.from_json({"source_path": "/home/radxa/a.mp4", "tracker_id": "yolov8n-int8", "roi": None,
+                                 "client_host": "10.0.0.2", "metadata_port": 5005, "playback_fps": "30", "single_frame": True}).single_frame
     assert metadata_packet(b"123,yolo8,1,2,3,4,0,0.9,6,7\n") == (7, 123, "yolo8", 1, 2, 3, 4, "0", "0.9", 6)
     assert metadata_packet(b"123,frame,,,,,,,,7\n") == (7, 123, "frame", None, None, None, None, "", "", None)
     try:

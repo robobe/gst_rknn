@@ -19,6 +19,9 @@ The selected client dataset root is retained with each saved selection.
 Use **Play source** to play the selected mirrored file or image sequence locally
 without contacting the Radxa server.
 
+For YOLO profiles, **Preview inference** runs the first buffer only on the Radxa
+and overlays its returned detections on the matching local preview frame.
+
 Pipeline profiles live in `server.yaml`. Each profile specifies its GStreamer
 element, required input format, whether it needs a selected ROI, and its fixed
 element properties. This keeps model paths and benchmark variants out of Python.
@@ -48,7 +51,9 @@ Copy the development host's dataset collection when needed:
 The server browser opens at `/home/radxa/gst-rknn/datasets` by default.
 
 On the development host, update `client.yaml` when its metadata receiving LAN IP changes,
-then run `python3 apps/nanotracker_benchmark/client.py`.
+then run `uv run --with-requirements apps/nanotracker_benchmark/requirements-client.txt python3 apps/nanotracker_benchmark/client.py`.
+Both applications write colourized Loguru diagnostics to stderr with timestamp, severity,
+model name, source line, and exception traceback.
 
 The desktop client uses the same system packages as the existing Python viewer:
 PyGObject/GStreamer, OpenCV, NumPy, and PyYAML. The Radxa setup installs an

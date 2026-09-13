@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Desktop client for metadata-paced RKNN benchmark playback."""
-import argparse, json, re, socket, threading, time, tkinter as tk, urllib.error, urllib.parse, urllib.request
+import argparse, json, re, socket, sys, threading, time, tkinter as tk, urllib.error, urllib.parse, urllib.request
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 import cv2, gi, numpy as np, yaml
+from loguru import logger
 from protocol import metadata_packet
 
 gi.require_version("Gst", "1.0"); gi.require_version("GstVideo", "1.0")
@@ -13,6 +14,8 @@ from gi.repository import Gst, GstVideo
 FPS_CHOICES = ("Auto", "1", "5", "10", "20", "30")
 IMAGE_SEQUENCE = re.compile(r"^(.*?)(\d+)(\.(?:jpg|jpeg|png))$", re.I)
 VIDEO_SUFFIXES = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v"}
+logger.remove()
+logger.add(sys.stderr, colorize=True, format="<green>{time:HH:mm:ss.SSS}</green> | <level>{level:<8}</level> | <cyan>{name}</cyan>:<cyan>{line}</cyan> | <magenta>model={extra[model]}</magenta> | {message}\n{exception}")
 
 
 def gst_value(value): return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
@@ -34,11 +37,14 @@ class Api:
 
 
 class LocalViewer:
-    def __init__(self, source, playback_fps, metadata_port=None):
+    def __init__(self, source, playback_fps, metadata_port=None, single_frame=False, model_name="-"):
         self.source, self.playback_fps, self.metadata_port = Path(source), playback_fps, metadata_port
+        self.single_frame = single_frame
         self.pipeline = self.sink = self.pending = None; self.frames = self.expected_frame = self.losses = 0
         self.first_frame = self.last_frame = self.pending_at = None; self.eos = False
         self.metadata, self.lock, self.stop_event, self.thread = {}, threading.Lock(), threading.Event(), None
+        self.receiver_ready, self.receiver_error = threading.Event(), None
+        self.log = logger.bind(model=model_name)
 
     @staticmethod
     def sequence(directory):
@@ -87,14 +93,23 @@ class LocalViewer:
         return cls.image(sample)
 
     def start(self):
-        if self.metadata_port: self.thread = threading.Thread(target=self.receive_metadata, daemon=True); self.thread.start()
-        args = self.source_args(self.source, self.playback_fps) + ["!", "videoscale", "!", "videoconvert", "!", "video/x-raw,format=BGR,width=640,height=360", "!", "appsink", "name=sink", "sync=false", "max-buffers=1", "drop=false"]
+        self.start_metadata_receiver()
+        args = self.source_args(self.source, self.playback_fps) + ["!", "videoscale", "!", "videoconvert", "!", "video/x-raw,format=BGR,width=640,height=360"]
+        if self.single_frame: args += ["!", "identity", "eos-after=1"]
+        args += ["!", "appsink", "name=sink", "sync=false", "max-buffers=1", "drop=false"]
         self.pipeline = Gst.parse_launch(" ".join(args)); self.sink = self.pipeline.get_by_name("sink"); self.pipeline.set_state(Gst.State.PLAYING)
+
+    def start_metadata_receiver(self):
+        if self.metadata_port is None: return
+        self.thread = threading.Thread(target=self.receive_metadata, daemon=True); self.thread.start()
+        if not self.receiver_ready.wait(1): raise ValueError("metadata receiver did not start")
+        if self.receiver_error: raise ValueError(f"metadata receiver failed: {self.receiver_error}")
+        self.log.debug("UDP metadata receiver ready on port {}", self.metadata_port)
 
     def receive_metadata(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
-            sock.bind(("0.0.0.0", self.metadata_port)); sock.settimeout(.25)
+            sock.bind(("0.0.0.0", self.metadata_port)); self.metadata_port = sock.getsockname()[1]; sock.settimeout(.25); self.receiver_ready.set()
             while not self.stop_event.is_set():
                 try:
                     frame_id, pts_ns, kind, x, y, width, height, initialized, confidence, class_id = metadata_packet(sock.recvfrom(2048)[0])
@@ -103,6 +118,8 @@ class LocalViewer:
                         if kind == "frame": item["complete_at"] = time.monotonic()
                         else: item["boxes"].append((kind, x, y, width, height, initialized, confidence, class_id))
                 except (socket.timeout, UnicodeDecodeError, ValueError): pass
+        except OSError as error:
+            self.receiver_error = str(error); self.receiver_ready.set(); self.log.opt(exception=error).error("UDP metadata receiver failed")
         finally: sock.close()
 
     def finished(self):
@@ -145,7 +162,7 @@ class Client:
     def __init__(self, config_path):
         config = yaml.safe_load(Path(config_path).read_text()) or {}; self.api, self.client_host = Api(config["server_url"]), config["client_host"]; self.metadata_port = int(config["metadata_port"])
         self.state_path = Path.home() / ".config" / "gst-rknn" / "nanotracker-benchmark-last-run.yaml"; Gst.init(None)
-        self.catalog = {}; self.viewer = self.run_id = self.roi = None; self.source_only = False; self.next_server_check = self.next_run_check = 0.0
+        self.catalog = {}; self.viewer = self.run_id = self.roi = None; self.source_only = self.preview_open = False; self.next_server_check = self.next_run_check = 0.0
         self.root = tk.Tk(); self.root.title("RKNN benchmark"); self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.source, self.source_display, self.local_root, self.local_source, self.ground_truth = tk.StringVar(), tk.StringVar(), tk.StringVar(), tk.StringVar(), tk.StringVar(); self.dataset, self.tracker, self.rate = tk.StringVar(value="Ad-hoc source"), tk.StringVar(), tk.StringVar(value="Auto")
         saved_root = self.state_document().get("client_dataset_root")
@@ -163,7 +180,7 @@ class Client:
         self.dataset_box = ttk.Combobox(panel, textvariable=self.dataset, state="readonly", width=52); self.dataset_box.grid(row=4, column=1, sticky="ew", pady=3); self.dataset_box.bind("<<ComboboxSelected>>", lambda _: self.choose_dataset())
         ttk.Entry(panel, textvariable=self.source_display, width=52, state="readonly").grid(row=5, column=1, sticky="ew", pady=3); ttk.Button(panel, text="Browse", command=self.browse_server).grid(row=5, column=2, padx=(6, 0)); ttk.Entry(panel, textvariable=self.local_source, width=52, state="readonly").grid(row=6, column=1, sticky="ew", pady=3)
         self.ground_truth_box = ttk.Entry(panel, textvariable=self.ground_truth, width=52); self.ground_truth_box.grid(row=7, column=1, sticky="ew", pady=3); self.ground_truth_browse = ttk.Button(panel, text="Browse", command=lambda: self.browse_server(True)); self.ground_truth_browse.grid(row=7, column=2, padx=(6, 0)); self.tracker_box = ttk.Combobox(panel, textvariable=self.tracker, state="readonly", width=52); self.tracker_box.grid(row=8, column=1, sticky="ew", pady=3); self.tracker_box.bind("<<ComboboxSelected>>", lambda _: self.profile_changed())
-        ttk.Combobox(panel, textvariable=self.rate, values=FPS_CHOICES, state="readonly", width=52).grid(row=9, column=1, sticky="ew", pady=3); self.preview_button = ttk.Button(panel, text="Preview / select ROI", command=self.preview); self.preview_button.grid(row=10, column=0, sticky="ew", pady=(8, 3)); ttk.Button(panel, text="Play source", command=lambda: self.start(True)).grid(row=10, column=1, sticky="ew", padx=(6, 0), pady=(8, 3)); ttk.Button(panel, text="Start benchmark", command=self.start).grid(row=10, column=2, sticky="ew", padx=(6, 0), pady=(8, 3)); ttk.Button(panel, text="Show pipeline", command=self.show_pipeline).grid(row=11, column=1, sticky="ew", pady=3); ttk.Button(panel, text="Stop", command=self.stop).grid(row=11, column=2, sticky="ew", padx=(6, 0), pady=3); ttk.Label(panel, textvariable=self.status, wraplength=620, justify="left").grid(row=12, column=0, columnspan=3, sticky="ew", pady=(8, 0)); panel.columnconfigure(1, weight=1)
+        ttk.Combobox(panel, textvariable=self.rate, values=FPS_CHOICES, state="readonly", width=52).grid(row=9, column=1, sticky="ew", pady=3); self.preview_button = ttk.Button(panel, text="Preview / select ROI", command=self.preview); self.preview_button.grid(row=10, column=0, sticky="ew", pady=(8, 3)); self.inference_preview_button = ttk.Button(panel, text="Preview inference", command=self.preview_inference); self.inference_preview_button.grid(row=10, column=1, sticky="ew", padx=(6, 0), pady=(8, 3)); ttk.Button(panel, text="Start benchmark", command=self.start).grid(row=10, column=2, sticky="ew", padx=(6, 0), pady=(8, 3)); ttk.Button(panel, text="Play source", command=lambda: self.start(True)).grid(row=11, column=0, sticky="ew", pady=3); ttk.Button(panel, text="Show pipeline", command=self.show_pipeline).grid(row=11, column=1, sticky="ew", pady=3); ttk.Button(panel, text="Stop", command=self.stop).grid(row=11, column=2, sticky="ew", padx=(6, 0), pady=3); ttk.Label(panel, textvariable=self.status, wraplength=620, justify="left").grid(row=12, column=0, columnspan=3, sticky="ew", pady=(8, 0)); panel.columnconfigure(1, weight=1)
 
     def load_catalog(self):
         try:
@@ -171,8 +188,9 @@ class Client:
         except RuntimeError as error: self.server_status.set(f"Server unavailable: {error}")
 
     def selected_profile(self): return self.tracker_profiles.get(self.tracker_labels.get(self.tracker.get(), ""), {})
+    def model_name(self): return str(self.selected_profile().get("properties", {}).get("model", self.selected_profile().get("label", "-")))
     def profile_changed(self):
-        required = self.selected_profile().get("requires_roi", True); self.preview_button.configure(text="Preview / select ROI" if required else "Preview"); self.ground_truth_box.configure(state="normal" if required else "disabled"); self.ground_truth_browse.configure(state="normal" if required else "disabled")
+        required = self.selected_profile().get("requires_roi", True); self.preview_button.configure(text="Preview / select ROI" if required else "Preview"); self.inference_preview_button.configure(state="disabled" if required else "normal"); self.ground_truth_box.configure(state="normal" if required else "disabled"); self.ground_truth_browse.configure(state="normal" if required else "disabled")
         if not required: self.roi = None; self.ground_truth.set("")
     def local_path(self):
         root, source, mirror = Path(self.local_root.get()).expanduser().resolve(), Path(self.source.get()).resolve(), Path(self.catalog["mirror_root"]).resolve()
@@ -258,19 +276,34 @@ class Client:
     def preview(self):
         try:
             frame = LocalViewer.preview(self.local_path(), self.rate.get())
-            if not self.selected_profile().get("requires_roi", True): cv2.imshow("Preview", frame); cv2.waitKey(0); cv2.destroyWindow("Preview"); return
+            if not self.selected_profile().get("requires_roi", True):
+                cv2.imshow("Preview", frame); cv2.waitKey(1); self.preview_open = True; self.status.set("Preview decoded locally; YOLO inference has not run"); return
             selected = cv2.selectROI("Select tracker ROI", frame, showCrosshair=True, fromCenter=False); cv2.destroyWindow("Select tracker ROI")
             if selected[2] > 0 and selected[3] > 0: self.roi = dict(zip(("x", "y", "width", "height"), map(int, selected))); self.status.set(f"ROI selected: {self.roi}")
         except ValueError as error: self.status.set(f"Preview failed: {error}")
+    def preview_inference(self):
+        if self.selected_profile().get("requires_roi", True): return
+        try:
+            if self.preview_open: cv2.destroyWindow("Preview"); self.preview_open = False
+            local = self.local_path(); self.viewer = LocalViewer(local, self.rate.get(), self.metadata_port, single_frame=True, model_name=self.model_name()); self.viewer.start()
+            payload = {"source_path": self.source.get(), "ground_truth": None, "tracker_id": self.tracker_labels.get(self.tracker.get(), ""), "roi": None, "client_host": self.client_host, "metadata_port": self.metadata_port, "playback_fps": self.rate.get(), "single_frame": True}
+            logger.bind(model=self.model_name()).info("Requesting one-frame preview source={}", self.source.get())
+            self.run_id = self.api.request("POST", "/v1/runs", payload)["id"]; self.status.set(f"Running one-frame inference {self.run_id}")
+        except (RuntimeError, ValueError) as error:
+            if self.viewer: self.viewer.close(); self.viewer = None
+            logger.bind(model=self.model_name()).opt(exception=error).error("Preview inference failed source={}", self.source.get())
+            self.status.set(f"Preview inference failed: {error}")
     def start(self, source_only=False):
         if not source_only and self.selected_profile().get("requires_roi", True) and not self.roi: self.status.set("Preview and select an ROI first"); return
         try:
-            local = self.local_path(); self.source_only = source_only; self.viewer = LocalViewer(local, self.rate.get(), None if source_only else self.metadata_port); self.viewer.start()
+            if self.preview_open: cv2.destroyWindow("Preview"); self.preview_open = False
+            local = self.local_path(); self.source_only = source_only; self.viewer = LocalViewer(local, self.rate.get(), None if source_only else self.metadata_port, model_name=self.model_name()); self.viewer.start()
             if source_only: self.status.set("Playing local mirrored source"); return
             payload = {"source_path": self.source.get(), "ground_truth": self.ground_truth.get() or None, "tracker_id": self.tracker_labels.get(self.tracker.get(), ""), "roi": self.roi, "client_host": self.client_host, "metadata_port": self.metadata_port, "playback_fps": self.rate.get()}; self.run_id = self.api.request("POST", "/v1/runs", payload)["id"]
             state = self.state_document(); run = self.selection(); state["last_run"] = run; state["recent_runs"] = [run, *state["recent_runs"]][:10]; self.write_state(state); self.refresh_saved_runs(state); self.status.set(f"Running {self.run_id}")
         except (RuntimeError, ValueError) as error:
             if self.viewer: self.viewer.close(); self.viewer = None
+            logger.bind(model=self.model_name()).opt(exception=error).error("Start failed source={}", self.source.get())
             self.status.set(f"Start failed: {error}")
     def stop(self):
         if self.run_id:
@@ -285,6 +318,7 @@ class Client:
         window = tk.Toplevel(self.root); text = tk.Text(window, width=108, height=8, wrap="word"); text.pack(fill="both", expand=True, padx=8, pady=8); text.insert("1.0", pipeline or "Pipeline is not ready"); text.configure(state="disabled")
     def tick(self):
         now = time.monotonic()
+        if self.preview_open: cv2.waitKey(1)
         if self.viewer: self.viewer.poll()
         if self.source_only and self.viewer and self.viewer.finished(): self.status.set("Local source finished"); self.viewer.close(); self.viewer = None; self.source_only = False
         if not self.run_id and now >= self.next_server_check:
@@ -297,12 +331,13 @@ class Client:
                 result = self.api.request("GET", f"/v1/runs/{self.run_id}"); self.server_status.set("Server: connected")
                 if result["status"] in ("failed", "stopped"):
                     if self.viewer: self.viewer.close(); self.viewer = None
+                    logger.bind(model=self.model_name()).error("Run {} {}: {}", self.run_id, result["status"], result.get("error") or "no error detail")
                     self.status.set(f"{result['status']}: artifacts ready under {self.run_id}"); self.run_id = None
                 elif result["status"] == "finished" and self.viewer and self.viewer.finished():
                     self.api.request("POST", f"/v1/runs/{self.run_id}/client-metrics", self.viewer.metrics()); self.viewer.close(); self.viewer = None; self.status.set(f"finished: artifacts ready under {self.run_id}"); self.run_id = None
             except RuntimeError as error: self.server_status.set("Server: unavailable"); self.status.set(f"Status failed: {error}")
         self.root.after(30, self.tick)
-    def close(self): self.stop(); self.root.destroy()
+    def close(self): self.stop(); cv2.destroyAllWindows(); self.root.destroy()
     def run(self): self.root.mainloop()
 
 

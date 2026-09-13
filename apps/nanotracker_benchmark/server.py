@@ -17,6 +17,7 @@ import gi
 import yaml
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from loguru import logger
 
 from protocol import Roi, RunCommand
 
@@ -27,6 +28,8 @@ from gi.repository import Gst
 FPS_CHOICES = ("Auto", "1", "5", "10", "20", "30")
 IMAGE_SEQUENCE = re.compile(r"^(.*?)(\d+)(\.(?:jpg|jpeg|png))$", re.IGNORECASE)
 VIDEO_SUFFIXES = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v"}
+logger.remove()
+logger.add(sys.stderr, colorize=True, format="<green>{time:HH:mm:ss.SSS}</green> | <level>{level:<8}</level> | <cyan>{name}</cyan>:<cyan>{line}</cyan> | <magenta>model={extra[model]}</magenta> | {message}\n{exception}")
 
 
 def gst_value(value):
@@ -160,6 +163,7 @@ class Service:
         if command.tracker_id not in self.trackers:
             raise ValueError("unknown tracker_id")
         profile = self.trackers[command.tracker_id]
+        log = logger.bind(model=str(profile.properties.get("model", profile.label)))
         if profile.requires_roi and command.roi is None:
             raise ValueError("roi is required for this profile")
         if command.ground_truth and not profile.requires_roi:
@@ -177,16 +181,19 @@ class Service:
             run = Run(run_id, command, directory)
             self.runs[run_id] = run
             self.active = run_id
-        prediction, log, pipeline_file = directory / "predictions.csv", directory / "pipeline.log", directory / "pipeline.txt"
+        prediction, log_file, pipeline_file = directory / "predictions.csv", directory / "pipeline.log", directory / "pipeline.txt"
         args = source_args + ["!", "videoscale", "!", "videoconvert", "!", f"video/x-raw,format={profile.input_format},width=640,height=360"]
+        if command.single_frame:
+            args += ["!", "identity", "eos-after=1"]
         args += ["!", *profile.gst_args(command.roi), "!", "roi2csv", f"location={prediction}", "!", "roi2udp",
                  f"host={command.client_host}", f"port={command.metadata_port}", "!", "fakesink", "sync=true"]
         process_args = ["gst-launch-1.0", "-q", *args]
         pipeline_file.write_text(" ".join(process_args) + "\n")
         (directory / "request.json").write_text(json.dumps(command.json(), indent=2) + "\n")
         environment = os.environ | {"GST_PLUGIN_PATH": str(self.install_root / "plugins"), "GST_REGISTRY_1_0": "/tmp/gst-rknn-registry.bin"}
-        with log.open("wb") as output:
+        with log_file.open("wb") as output:
             run.process = subprocess.Popen(process_args, stdout=output, stderr=subprocess.STDOUT, env=environment)
+        log.info("Started run {} single_frame={} source={}", run.id, command.single_frame, command.source_path)
         threading.Thread(target=self._finish, args=(run,), daemon=True).start()
         return run
 
@@ -199,6 +206,8 @@ class Service:
             run.status, run.error = "failed", f"gst-launch exited with {code}"
         else:
             run.status = "finished"
+        log = logger.bind(model=str(self.trackers[run.command.tracker_id].properties.get("model", self.trackers[run.command.tracker_id].label)))
+        log.info("Run {} {} exit={} log={}", run.id, run.status, code, run.directory / "pipeline.log")
         rows = []
         prediction = run.directory / "predictions.csv"
         if prediction.exists():
