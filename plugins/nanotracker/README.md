@@ -2,6 +2,32 @@
 
 `rknnnanotrack` follows one user-selected object using the three NanoTrackV3 RKNN models. It preserves input pixels and attaches `nanotrack` `GstVideoRegionOfInterestMeta` to every active frame; it does not draw a box.
 
+## Frame flow
+
+```mermaid
+flowchart LR
+  A[Progressive BGR frame] --> B{enabled?}
+  B -->|no| C[Pass frame through]
+  B -->|yes| D[Map frame + validate ROI]
+  D --> E{New ROI, discontinuity, or stream reset?}
+  E -->|yes| F[Pad crop with frame-average BGR]
+  F --> G{resize=auto and RGA works?}
+  G -->|yes| H[RGA resize crop to 127x127]
+  G -->|no or resize=cpu| I[OpenCV resize crop to 127x127]
+  H --> J[Template backbone\n96x8x8 feature]
+  I --> J
+  J --> K[Attach initialized ROI metadata]
+  E -->|no| L[Pad search crop around current target]
+  L --> M{resize=auto and RGA works?}
+  M -->|yes| N[RGA resize crop to 255x255]
+  M -->|no or resize=cpu| O[OpenCV resize crop to 255x255]
+  N --> P[Search backbone\n96x16x16 feature]
+  O --> P
+  P --> Q[Head reads shared RKNN feature buffers]
+  Q --> R[Decode 15x15 scores + boxes\nupdate target state]
+  R --> S[Attach ROI + confidence metadata]
+```
+
 ## Properties
 
 | Property | Default | Description |

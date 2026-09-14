@@ -50,6 +50,8 @@ uv pip install --python .venv-rknn/bin/python pycocotools
 The images, annotations, detections, and timing JSON remain local under
 `assets/coco_val_sample/`; the generated comparison record is
 [`docs/guides/yolov8-coco-val-sample.md`](../../docs/guides/yolov8-coco-val-sample.md).
+For the planned camera-equivalent plugin measurement, see
+[`docs/guides/yolov8-camera-detector-benchmark.md`](../../docs/guides/yolov8-camera-detector-benchmark.md).
 
 ## Hybrid-INT8 conversion with Toolkit2 2.3.2
 

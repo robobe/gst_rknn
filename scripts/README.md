@@ -15,6 +15,7 @@ them with `RADXA_HOST`, `RADXA_USER`, and `RADXA_ROOT`.
 | `./scripts/ensure-rknn-toolkit.sh` | Create/update the host Python 3.12 `uv` environment with RKNN-Toolkit2 2.3.2. |
 | `bash ./scripts/yolov8/hybrid-evaluate.sh` | Deploy and smoke-test the INT8 and hybrid-INT8 YOLOv8 models, evaluate both on COCO val, and write their comparison report. |
 | `bash ./scripts/yolov8/test-plugin.sh` | Cross-build, deploy, inspect, and smoke-test the RGB YOLOv8 detection plugin. |
+| Planned `bash ./scripts/yolov8/benchmark-camera.sh` | Measure the camera-equivalent YOLO detector path; see [`yolov8-camera-detector-benchmark.md`](../docs/guides/yolov8-camera-detector-benchmark.md) for its timing boundary and quality metric. |
 | `sudo ./scripts/install-rknn-runtime-2.3.2.sh` | Install the staged RKNN 2.3.2 board runtime and save a system backup. |
 | `./scripts/remote-test.sh inspect` | Inspect the `rknnhello` plugin. |
 | `./scripts/remote-test.sh smoke` | Run the one-frame hello pipeline. |

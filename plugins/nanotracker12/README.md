@@ -5,6 +5,32 @@ V1 and V2 networks. It accepts progressive BGR video and publishes the normal
 `GstVideoRegionOfInterestMeta` named `nanotrack`, so `roi2csv`, `roi2udp`, and
 the existing viewers work without changes.
 
+## Frame flow
+
+```mermaid
+flowchart LR
+  A[Progressive BGR frame] --> B{enabled?}
+  B -->|no| C[Pass frame through]
+  B -->|yes| D[Map frame + validate ROI]
+  D --> E{New ROI, discontinuity, or stream reset?}
+  E -->|yes| F[Pad crop with frame-average BGR]
+  F --> G{resize=auto and RGA works?}
+  G -->|yes| H[RGA resize crop to 127x127]
+  G -->|no or resize=cpu| I[OpenCV resize crop to 127x127]
+  H --> J[Template backbone\n48x8x8 feature]
+  I --> J
+  J --> K[Attach initialized ROI metadata]
+  E -->|no| L[Pad search crop around current target]
+  L --> M{resize=auto and RGA works?}
+  M -->|yes| N[RGA resize crop to 255x255]
+  M -->|no or resize=cpu| O[OpenCV resize crop to 255x255]
+  N --> P[Search backbone\n48x16x16 feature]
+  O --> P
+  P --> Q[Head reads shared RKNN feature buffers]
+  Q --> R[Decode 16x16 scores + boxes\nupdate target state]
+  R --> S[Attach ROI + confidence metadata]
+```
+
 ```sh
 gst-launch-1.0 videotestsrc num-buffers=60 ! videoconvert ! \
   video/x-raw,format=BGR,width=320,height=240 ! \
